@@ -16,10 +16,21 @@
   .status { padding: 0.15rem 0.5rem; border-radius: 999px; background: #21262d; font-size: 0.8rem; }
   #error { color: #ff7b72; }
   .meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 1rem; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #161b22; }
+  #detail { margin-top: 1.5rem; padding: 1rem 1.25rem; border: 1px solid #30363d;
+            border-radius: 8px; background: #161b22; max-width: 70rem; }
+  #detail h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  #detail h3 { font-size: 0.8rem; text-transform: uppercase; color: #8b949e;
+               margin: 1rem 0 0.35rem; }
+  #detail p { margin: 0.25rem 0; font-size: 0.92rem; line-height: 1.45; }
+  #detail ul { margin: 0.25rem 0; padding-left: 1.25rem; font-size: 0.92rem; }
+  #detail li { margin: 0.2rem 0; }
+  #detail .close { float: right; cursor: pointer; color: #8b949e; }
 </style>
 </head>
 <body>
-<h1>🔒 Local Security Assessment Platform <span class="sub">v0.1</span></h1>
+<h1>🔒 Local Security Assessment Platform <span class="sub">v0.2</span></h1>
 <div class="sub">Local-first findings. Nothing leaves this machine.</div>
 <div class="meta" id="meta">loading…</div>
 <div id="error"></div>
@@ -29,6 +40,7 @@
   </thead>
   <tbody></tbody>
 </table>
+<div id="detail" hidden></div>
 <script>
 async function load() {
   try {
@@ -48,12 +60,40 @@ async function load() {
         '<td><span class="status">' + f.status + '</span></td>' +
         '<td>' + (f.first_seen || '') + '</td>' +
         '<td>' + (f.last_seen || '') + '</td>';
+      tr.addEventListener('click', () => showExplanation(f.id));
       tbody.appendChild(tr);
     }
     document.getElementById('findings').hidden = false;
   } catch (e) {
     document.getElementById('error').textContent = 'Failed to load findings: ' + e;
     document.getElementById('meta').textContent = '';
+  }
+}
+async function showExplanation(findingId) {
+  const detail = document.getElementById('detail');
+  detail.hidden = false;
+  detail.innerHTML = '<p class="meta">Analyzing locally…</p>';
+  try {
+    const res = await fetch('/findings/' + encodeURIComponent(findingId) + '/explanation');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const e = await res.json();
+    const steps = e.what_to_do.map(s => '<li>' + escapeHtml(s) + '</li>').join('');
+    detail.innerHTML =
+      '<span class="close" id="detail-close">✕ close</span>' +
+      '<h2>🕵️ Analyst: ' + escapeHtml(e.summary) + '</h2>' +
+      '<p class="meta">Severity: <span class="sev-' + e.severity + '">' + e.severity +
+      '</span> · generated locally, no data left this machine</p>' +
+      '<h3>What was observed</h3><p>' + escapeHtml(e.what_was_observed) + '</p>' +
+      '<h3>What it means</h3><p>' + escapeHtml(e.what_it_means) + '</p>' +
+      '<h3>Why it matters</h3><p>' + escapeHtml(e.why_it_matters) + '</p>' +
+      '<h3>What to do</h3><ul>' + steps + '</ul>' +
+      '<h3>Confidence</h3><p>' + escapeHtml(e.confidence) + '</p>';
+    document.getElementById('detail-close').addEventListener('click', () => {
+      detail.hidden = true;
+    });
+    detail.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  } catch (err) {
+    detail.innerHTML = '<p id="error">Failed to load explanation: ' + escapeHtml(err) + '</p>';
   }
 }
 function escapeHtml(s) {

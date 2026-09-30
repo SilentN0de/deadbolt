@@ -3,6 +3,28 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0] — 2026-09-30
+
+### Added
+- Local analyst (`analyst/`): deterministic, offline explanation engine with a
+  curated per-service knowledge base (what the service is, why exposure
+  matters, prioritized remediation steps). No cloud calls — nothing leaves
+  the machine.
+- `GET /findings/{id}/explanation`: plain-English analysis per finding —
+  summary, what was observed (incl. banner/version-disclosure notes), what it
+  means, why it matters, what to do, and an explicit confidence statement
+  separating proven facts (TCP handshake) from inference (service identity).
+- Dashboard: click any finding row to open the analyst explanation panel.
+- `docs/analyst.md`: engine design, honesty rules, and how to extend the
+  knowledge base. Knowledge-base coverage of every discovery port is enforced
+  by test.
+- Test suite now 29 tests (was 22): knowledge coverage, explanation quality,
+  unknown-port and unresponsive-host fallbacks, and the new endpoint.
+
+### Changed
+- Shared pytest fixtures moved to `tests/conftest.py`.
+- Version bumped to 0.2.0 (API, dashboard label, README).
+
 ## [0.1.0] — 2026-09-30
 
 ### Added

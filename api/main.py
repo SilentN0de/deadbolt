@@ -15,10 +15,11 @@ from pydantic import BaseModel
 
 from agent.discovery import run_discovery
 from agent.scope import ScopeError
+from analyst import explain_finding
 from common.logging_setup import configure_logging, install_crash_hook
 from storage.db import Store
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "findings.db")
 DEFAULT_SCOPE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -99,6 +100,19 @@ def get_finding(finding_id: str):
     if finding is None:
         raise HTTPException(status_code=404, detail="finding not found")
     return finding.to_dict()
+
+
+@app.get("/findings/{finding_id}/explanation")
+def explain(finding_id: str):
+    """Plain-English analyst explanation for a finding (local, deterministic)."""
+    store = _store()
+    try:
+        finding = store.get_finding(finding_id)
+    finally:
+        store.close()
+    if finding is None:
+        raise HTTPException(status_code=404, detail="finding not found")
+    return explain_finding(finding).to_dict()
 
 
 @app.get("/", include_in_schema=False)

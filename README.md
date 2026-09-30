@@ -6,9 +6,11 @@ A privacy-first security assessment platform for systems you own or are
 explicitly authorized to test. The core loop: **Discover → Safely Validate →
 Explain → Remediate → Retest → Monitor.**
 
-**Current stage: V0.1 — local read-only discovery.** A Python agent discovers
+**Current stage: V0.2 — local discovery + analyst explanations.** A Python agent discovers
 open TCP services on authorized targets, stores evidence-backed findings in a
-local SQLite database, and serves them through a local API + dashboard.
+local SQLite database, and a built-in analyst explains each finding in
+plain English (what was seen, what it means, why it matters, what to do) —
+all served through a local API + dashboard.
 Nothing leaves the machine.
 
 ## Quickstart
