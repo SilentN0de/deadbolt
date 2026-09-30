@@ -90,6 +90,26 @@ class Run:
 
 
 @dataclass
+class Validation:
+    """One controlled validation of a finding (V0.3)."""
+    id: int | None
+    finding_id: str
+    timestamp: str          # ISO-8601 UTC
+    checks: List[str]       # e.g. ["tcp_reprobe", "banner_intel"]
+    results: List[Dict[str, Any]]  # per-check {check, ok, verdict, summary, detail}
+    outcome: str            # "confirmed" | "false-positive" | "intel" | "inconclusive"
+    status_before: str = "suspected"
+    status_after: str = "suspected"
+
+    def __post_init__(self) -> None:
+        if self.outcome not in ("confirmed", "false-positive", "intel", "inconclusive"):
+            raise ValueError(f"invalid outcome: {self.outcome!r}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class AuditEntry:
     id: int | None
     timestamp: str

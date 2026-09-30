@@ -92,3 +92,19 @@ BEFORE DELETE ON audit_log
 BEGIN
     SELECT RAISE(ABORT, 'audit_log is immutable: DELETE not permitted');
 END;
+
+-- ----------------------------------------------------------------------------
+-- validations: one row per controlled validation of a finding (V0.3).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS validations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id    TEXT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    timestamp     TEXT NOT NULL,           -- ISO-8601 UTC
+    checks        TEXT NOT NULL DEFAULT '[]', -- JSON array of check names
+    results       TEXT NOT NULL DEFAULT '[]', -- JSON array of check results
+    outcome       TEXT NOT NULL CHECK (outcome IN
+                    ('confirmed','false-positive','intel','inconclusive')),
+    status_before TEXT NOT NULL DEFAULT 'suspected',
+    status_after  TEXT NOT NULL DEFAULT 'suspected'
+);
+CREATE INDEX IF NOT EXISTS idx_validations_finding ON validations(finding_id);

@@ -12,7 +12,8 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
-from .models import AuditEntry, Evidence, Finding, Run, dumps, loads
+from .models import (AuditEntry, Evidence, Finding, Run, STATUSES, Validation,
+                     dumps, loads)
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
 
@@ -184,6 +185,61 @@ class Store:
                 for e in ev_rows
             ],
         )
+
+    # -- validations (V0.3) -------------------------------------------------
+    def add_validation(self, validation: Validation) -> int:
+        with self._tx() as conn:
+            cur = conn.execute(
+                """INSERT INTO validations
+                   (finding_id, timestamp, checks, results, outcome,
+                    status_before, status_after)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    validation.finding_id,
+                    validation.timestamp,
+                    dumps(validation.checks),
+                    dumps(validation.results),
+                    validation.outcome,
+                    validation.status_before,
+                    validation.status_after,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_validations(self, finding_id: str) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM validations WHERE finding_id = ? ORDER BY id",
+            (finding_id,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["checks"] = loads(d["checks"])
+            d["results"] = loads(d["results"])
+            out.append(d)
+        return out
+
+    def update_finding_status(self, finding_id: str, status: str,
+                              event: str = "", timestamp: str = "") -> None:
+        """Transition a finding's status and record the event in retest_history."""
+        if status not in STATUSES:
+            raise ValueError(f"invalid status: {status!r}")
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT retest_history FROM findings WHERE id = ?",
+                (finding_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"finding not found: {finding_id}")
+            history = loads(row["retest_history"])
+            if not isinstance(history, list):
+                history = []
+            history.append({"timestamp": timestamp, "event": event,
+                            "status": status})
+            conn.execute(
+                "UPDATE findings SET status = ?, retest_history = ? WHERE id = ?",
+                (status, dumps(history), finding_id),
+            )
 
     # -- runs ---------------------------------------------------------------
     def create_run(self, run: Run) -> int:
