@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# Authorized assessment targets — Local-First Security Assessment Platform
+# ---------------------------------------------------------------------------
+# SAFETY: the agent REFUSES to run unless this file exists and explicitly
+# lists at least one target. Every target entry must set `authorized: true`.
+#
+# Public IPs and 0.0.0.0/0 additionally require:
+#   authorization_acknowledged: true   (top-level, in this file)
+# AND per-target `authorized: true`.
+# Every allow/deny decision is written to the log and the immutable audit log.
+# ---------------------------------------------------------------------------
+
+version: 1
+
+# Set to true ONLY when you own or are explicitly authorized to assess every
+# target below. Required for any public IP or 0.0.0.0/0 target.
+authorization_acknowledged: false
+
+targets:
+  # Shipped default: loopback only. Safe to run anywhere.
+  - target: "127.0.0.1"
+    authorized: true
+    label: "localhost (loopback)"
+
+  # Examples (uncomment and authorize deliberately):
+  # - target: "192.168.1.0/24"
+  #   authorized: true
+  #   label: "home lab LAN"
+  # - target: "10.0.0.5"
+  #   authorized: true
+  #   label: "lab server"

@@ -1,0 +1,12 @@
+# Local runtime artifacts — never commit assessment data or logs
+logs/
+*.db
+*.db-wal
+*.db-shm
+data/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Security Assessment Platform</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; background: #0f1419; color: #e6edf3; }
+  h1 { font-size: 1.4rem; }
+  .sub { color: #8b949e; margin-bottom: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #30363d; }
+  th { color: #8b949e; text-transform: uppercase; font-size: 0.75rem; }
+  .sev-info { color: #79c0ff; } .sev-low { color: #7ee787; }
+  .sev-medium { color: #ffa657; } .sev-high { color: #ff7b72; } .sev-critical { color: #ff4444; font-weight: bold; }
+  .status { padding: 0.15rem 0.5rem; border-radius: 999px; background: #21262d; font-size: 0.8rem; }
+  #error { color: #ff7b72; }
+  .meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<h1>🔒 Local Security Assessment Platform <span class="sub">v0.1</span></h1>
+<div class="sub">Local-first findings. Nothing leaves this machine.</div>
+<div class="meta" id="meta">loading…</div>
+<div id="error"></div>
+<table id="findings" hidden>
+  <thead>
+    <tr><th>Target</th><th>Title</th><th>Severity</th><th>Status</th><th>First seen</th><th>Last seen</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<script>
+async function load() {
+  try {
+    const res = await fetch('/findings');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const findings = await res.json();
+    document.getElementById('meta').textContent =
+      findings.length + ' finding(s) stored locally.';
+    const tbody = document.querySelector('#findings tbody');
+    tbody.innerHTML = '';
+    for (const f of findings) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><code>' + f.target + '</code></td>' +
+        '<td>' + escapeHtml(f.title) + '</td>' +
+        '<td><span class="sev-' + f.severity + '">' + f.severity + '</span></td>' +
+        '<td><span class="status">' + f.status + '</span></td>' +
+        '<td>' + (f.first_seen || '') + '</td>' +
+        '<td>' + (f.last_seen || '') + '</td>';
+      tbody.appendChild(tr);
+    }
+    document.getElementById('findings').hidden = false;
+  } catch (e) {
+    document.getElementById('error').textContent = 'Failed to load findings: ' + e;
+    document.getElementById('meta').textContent = '';
+  }
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+load();
+</script>
+</body>
+</html>
