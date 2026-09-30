@@ -27,10 +27,19 @@
   #detail ul { margin: 0.25rem 0; padding-left: 1.25rem; font-size: 0.92rem; }
   #detail li { margin: 0.2rem 0; }
   #detail .close { float: right; cursor: pointer; color: #8b949e; }
+  #detail .vbtn { margin-top: 1rem; padding: 0.45rem 1rem; border: 1px solid #30363d;
+                  border-radius: 6px; background: #238636; color: #fff; cursor: pointer;
+                  font-size: 0.9rem; }
+  #detail .vbtn:disabled { background: #21262d; color: #8b949e; cursor: default; }
+  #detail .vresult { margin-top: 1rem; padding: 0.75rem; border: 1px solid #30363d;
+                    border-radius: 6px; background: #0d1117; }
+  #detail .vresult h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+  .verdict-confirmed { color: #7ee787; } .verdict-contradicted { color: #ff7b72; }
+  .verdict-intel { color: #79c0ff; } .verdict-inconclusive { color: #8b949e; }
 </style>
 </head>
 <body>
-<h1>🔒 Local Security Assessment Platform <span class="sub">v0.2</span></h1>
+<h1>🔒 Local Security Assessment Platform <span class="sub">v0.3</span></h1>
 <div class="sub">Local-first findings. Nothing leaves this machine.</div>
 <div class="meta" id="meta">loading…</div>
 <div id="error"></div>
@@ -87,14 +96,64 @@ async function showExplanation(findingId) {
       '<h3>What it means</h3><p>' + escapeHtml(e.what_it_means) + '</p>' +
       '<h3>Why it matters</h3><p>' + escapeHtml(e.why_it_matters) + '</p>' +
       '<h3>What to do</h3><ul>' + steps + '</ul>' +
-      '<h3>Confidence</h3><p>' + escapeHtml(e.confidence) + '</p>';
+      '<h3>Confidence</h3><p>' + escapeHtml(e.confidence) + '</p>' +
+      '<button class="vbtn" id="validate-btn">✔ Run validation</button>' +
+      '<div id="vresult"></div><div id="vhistory"></div>';
     document.getElementById('detail-close').addEventListener('click', () => {
       detail.hidden = true;
     });
+    document.getElementById('validate-btn').addEventListener('click', () => {
+      runValidation(findingId);
+    });
+    loadValidationHistory(findingId);
     detail.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   } catch (err) {
     detail.innerHTML = '<p id="error">Failed to load explanation: ' + escapeHtml(err) + '</p>';
   }
+}
+async function runValidation(findingId) {
+  const btn = document.getElementById('validate-btn');
+  const box = document.getElementById('vresult');
+  btn.disabled = true;
+  box.innerHTML = '<p class="meta">Running read-only validation checks…</p>';
+  try {
+    const res = await fetch('/findings/' + encodeURIComponent(findingId) + '/validate',
+      {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error('HTTP ' + res.status + (err.detail ? ': ' + err.detail : ''));
+    }
+    const v = await res.json();
+    const rows = v.results.map(r =>
+      '<li><span class="verdict-' + r.verdict + '">[' + r.verdict + ']</span> ' +
+      '<b>' + escapeHtml(r.check) + ':</b> ' + escapeHtml(r.summary) + '</li>').join('');
+    box.innerHTML = '<div class="vresult"><h4>Validation outcome: ' +
+      '<span class="verdict-' + (v.outcome === 'confirmed' ? 'confirmed' :
+        v.outcome === 'false-positive' ? 'contradicted' : 'intel') + '">' +
+      escapeHtml(v.outcome) + '</span> ' +
+      '<span class="meta">(status: ' + escapeHtml(v.status_before) + ' → ' +
+      escapeHtml(v.status_after) + ')</span></h4><ul>' + rows + '</ul></div>';
+    loadValidationHistory(findingId);
+  } catch (err) {
+    box.innerHTML = '<p id="error">Validation failed: ' + escapeHtml(err) + '</p>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+async function loadValidationHistory(findingId) {
+  const box = document.getElementById('vhistory');
+  if (!box) return;
+  try {
+    const res = await fetch('/findings/' + encodeURIComponent(findingId) + '/validations');
+    if (!res.ok) return;
+    const hist = await res.json();
+    if (!hist.length) { box.innerHTML = ''; return; }
+    const rows = hist.map(v =>
+      '<li>' + escapeHtml(v.timestamp) + ' — <b>' + escapeHtml(v.outcome) + '</b> ' +
+      '<span class="meta">(' + v.checks.map(escapeHtml).join(', ') + '; ' +
+      escapeHtml(v.status_before) + ' → ' + escapeHtml(v.status_after) + ')</span></li>').join('');
+    box.innerHTML = '<h3>Validation history</h3><ul>' + rows + '</ul>';
+  } catch (err) { /* history is best-effort */ }
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>

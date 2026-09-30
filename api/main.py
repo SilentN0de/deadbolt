@@ -7,7 +7,8 @@ this machine unless the operator deliberately changes the bind address.
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+import time
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,8 +19,9 @@ from agent.scope import ScopeError
 from analyst import explain_finding
 from common.logging_setup import configure_logging, install_crash_hook
 from storage.db import Store
+from validator import ValidationError, validate_finding
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "findings.db")
 DEFAULT_SCOPE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -40,6 +42,17 @@ def _store() -> Store:
 class RunRequest(BaseModel):
     scope: Optional[str] = None  # path to authorized_targets.yaml
     ports: Optional[str] = None  # comma-separated override, e.g. "22,80"
+
+
+class ValidateRequest(BaseModel):
+    scope: Optional[str] = None  # path to authorized_targets.yaml
+    checks: Optional[List[str]] = None  # subset of tcp_reprobe, tls_certificate, banner_intel
+
+
+# Cooldown between validations of the same finding (seconds): prevents
+# accidental double-submits from re-probing the target.
+VALIDATION_COOLDOWN = 10.0
+_last_validation: Dict[str, float] = {}
 
 
 @app.get("/health")
@@ -113,6 +126,48 @@ def explain(finding_id: str):
     if finding is None:
         raise HTTPException(status_code=404, detail="finding not found")
     return explain_finding(finding).to_dict()
+
+
+@app.post("/findings/{finding_id}/validate", status_code=201)
+def validate(req: ValidateRequest, finding_id: str):
+    """Run controlled, read-only validation checks against one finding.
+
+    The finding's target must be inside the authorized scope, else 400.
+    """
+    now = time.monotonic()
+    last = _last_validation.get(finding_id, 0.0)
+    if now - last < VALIDATION_COOLDOWN:
+        raise HTTPException(
+            status_code=429,
+            detail=f"validation cooling down; retry in "
+                   f"{VALIDATION_COOLDOWN - (now - last):.0f}s")
+    store = _store()
+    try:
+        try:
+            result = validate_finding(
+                store, finding_id,
+                checks=req.checks,
+                scope_path=req.scope or DEFAULT_SCOPE)
+        except ValidationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ScopeError as exc:
+            # validate_finding already wrote the deny audit entry.
+            raise HTTPException(status_code=400, detail=f"scope refused: {exc}")
+    finally:
+        store.close()
+    _last_validation[finding_id] = time.monotonic()
+    return result
+
+
+@app.get("/findings/{finding_id}/validations")
+def list_validations(finding_id: str):
+    store = _store()
+    try:
+        if store.get_finding(finding_id) is None:
+            raise HTTPException(status_code=404, detail="finding not found")
+        return store.list_validations(finding_id)
+    finally:
+        store.close()
 
 
 @app.get("/", include_in_schema=False)

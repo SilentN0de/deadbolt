@@ -3,6 +3,34 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] — 2026-09-30
+
+### Added
+- Controlled validation (`validator/`): operator-triggered, single-finding,
+  read-only follow-up checks — `tcp_reprobe` (confirm still open / detect
+  gone), `tls_certificate` (handshake-only cert inspection: expiry,
+  self-signed, TLS version), `banner_intel` (offline flagging of
+  long-unmaintained releases). No payloads, no brute force, no auth attempts.
+- Finding status transitions from validation: `suspected` → `confirmed` or
+  `suspected` → `false-positive`; human-set states are never overwritten.
+  Every attempt (allowed or denied) is written to the immutable audit log,
+  and the finding's host must be inside the authorized scope or validation
+  is refused.
+- `validations` table + `Validation` model; each check result is stored as
+  evidence on the finding.
+- Simulated lab (`sim/`): fake SSH/HTTP/HTTPS services on 127.0.0.1 for
+  safe end-to-end testing, plus `scripts/simulate_lab.py` for manual runs.
+- `POST /findings/{id}/validate` (10s per-finding cooldown) and
+  `GET /findings/{id}/validations`; dashboard "Run validation" button with
+  per-check results and validation history.
+- `docs/validation.md`: checks, outcomes, safety rails, sim lab usage.
+- Test suite now 45 tests (was 29): 16 simulation-backed validator tests
+  covering confirm/false-positive transitions, TLS parsing, banner intel,
+  scope refusal, audit entries, cooldown, and the new endpoints.
+
+### Changed
+- Version bumped to 0.3.0 (API, dashboard label, README).
+
 ## [0.2.0] — 2026-09-30
 
 ### Added
