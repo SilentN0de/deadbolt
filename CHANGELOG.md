@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- Splunk integration (`exporters/splunk.py`): findings export as
+  CIM-friendly Splunk events (`sourcetype` `secplatform:finding`; fields
+  `dest`, `dest_port`, `severity`, `status`). Two operator-triggered,
+  audit-logged paths — spool JSONL files for a Universal Forwarder
+  (`data/splunk_spool/`, no Splunk credentials needed) and direct HEC
+  POST (via `SPLUNK_HEC_URL` / `SPLUNK_HEC_TOKEN` env vars only).
+- `POST /export/splunk` with `mode`, `severity`, `status`, `target`
+  filters; 503 when HEC is unconfigured; every attempt audit-logged.
+- Dashboard "Export to Splunk" button with spool/HEC mode selector.
+- `docs/splunk.md`: forwarder stanza, HEC token setup, field reference.
+- 9 new offline tests (54 total): event formatting, spool output, HEC
+  payload shape and error handling, endpoint behavior, audit entries.
+
 ## [0.3.0] — 2026-09-30
 
 ### Added

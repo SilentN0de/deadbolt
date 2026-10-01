@@ -42,6 +42,14 @@
 <h1>🔒 Local Security Assessment Platform <span class="sub">v0.3</span></h1>
 <div class="sub">Local-first findings. Nothing leaves this machine.</div>
 <div class="meta" id="meta">loading…</div>
+<div id="exportbar" style="margin-bottom: 1rem;">
+  <button id="export-btn" class="vbtn" style="padding: 0.4rem 0.9rem; border: 1px solid #30363d; border-radius: 6px; background: #1f6feb; color: #fff; cursor: pointer; font-size: 0.85rem;">⬆ Export to Splunk</button>
+  <select id="export-mode" style="margin-left: 0.5rem; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.35rem;">
+    <option value="spool">spool file (Universal Forwarder)</option>
+    <option value="hec">HEC (needs SPLUNK_HEC_URL/TOKEN)</option>
+  </select>
+  <span id="export-result" class="meta" style="margin-left: 0.75rem;"></span>
+</div>
 <div id="error"></div>
 <table id="findings" hidden>
   <thead>
@@ -78,6 +86,27 @@ async function load() {
     document.getElementById('meta').textContent = '';
   }
 }
+document.getElementById('export-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('export-btn');
+  const mode = document.getElementById('export-mode').value;
+  const out = document.getElementById('export-result');
+  btn.disabled = true;
+  out.textContent = 'Exporting…';
+  try {
+    const res = await fetch('/export/splunk',
+      {method: 'POST', headers: {'Content-Type': 'application/json'},
+       body: JSON.stringify({mode})});
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error('HTTP ' + res.status + (body.detail ? ': ' + body.detail : ''));
+    out.textContent = mode === 'spool'
+      ? 'Wrote ' + body.events + ' event(s) → ' + body.path
+      : 'Sent ' + body.events + ' event(s) to HEC.';
+  } catch (err) {
+    out.textContent = 'Export failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 async function showExplanation(findingId) {
   const detail = document.getElementById('detail');
   detail.hidden = false;

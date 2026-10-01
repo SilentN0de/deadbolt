@@ -17,8 +17,10 @@ from pydantic import BaseModel
 from agent.discovery import run_discovery
 from agent.scope import ScopeError
 from analyst import explain_finding
-from common.logging_setup import configure_logging, install_crash_hook
+from common.logging_setup import configure_logging, install_crash_hook, utc_now_iso
+from exporters import splunk as splunk_exporter
 from storage.db import Store
+from storage.models import AuditEntry
 from validator import ValidationError, validate_finding
 
 VERSION = "0.3.0"
@@ -166,6 +168,56 @@ def list_validations(finding_id: str):
         if store.get_finding(finding_id) is None:
             raise HTTPException(status_code=404, detail="finding not found")
         return store.list_validations(finding_id)
+    finally:
+        store.close()
+
+
+class ExportRequest(BaseModel):
+    mode: str = "spool"  # "spool" (Universal Forwarder file) or "hec"
+    severity: Optional[str] = None
+    status: Optional[str] = None
+    target: Optional[str] = None
+
+
+@app.post("/export/splunk", status_code=201)
+def export_splunk(req: ExportRequest):
+    """Export findings as Splunk-ready events.
+
+    mode="spool" (default): append JSON Lines to data/splunk_spool/ for a
+    Universal Forwarder to ingest. No Splunk credentials needed.
+    mode="hec": POST to the HEC endpoint from SPLUNK_HEC_URL /
+    SPLUNK_HEC_TOKEN. 503 if unconfigured. Every export is audit-logged.
+    """
+    if req.mode not in ("spool", "hec"):
+        raise HTTPException(status_code=400,
+                            detail="mode must be 'spool' or 'hec'")
+    started = utc_now_iso()
+    store = _store()
+    try:
+        findings = store.list_findings(
+            target=req.target, severity=req.severity, status=req.status)
+        events = [splunk_exporter.finding_to_event(f) for f in findings]
+        try:
+            if req.mode == "spool":
+                result = splunk_exporter.write_spool(events)
+            else:
+                result = splunk_exporter.send_hec(events)
+        except RuntimeError as exc:
+            store.audit(AuditEntry(
+                id=None, timestamp=started, event="export.splunk",
+                scope_file="", scope_hash=None,
+                authorization_acknowledged=False,
+                target_count=len(findings),
+                decision="deny", reason=str(exc)))
+            raise HTTPException(status_code=503, detail=str(exc))
+        store.audit(AuditEntry(
+            id=None, timestamp=started, event="export.splunk",
+            scope_file="", scope_hash=None,
+            authorization_acknowledged=False,
+            target_count=len(findings),
+            decision="allow",
+            reason=f"mode={req.mode} events={len(events)}"))
+        return result
     finally:
         store.close()
 
