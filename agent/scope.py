@@ -120,9 +120,16 @@ def load_scope(scope_path: str) -> ScopeDecision:
                 f"target {raw!r} expands to {count} hosts; large scans require "
                 "`authorization_acknowledged: true`. Refusing to run."
             )
-        # For scanning we use usable hosts; keep /32 and /31 intact.
-        hosts = [str(h) for h in net.hosts()] if count > 2 else [str(net.network_address)]
-        if not hosts:  # e.g. /31 edge cases
+        # For scanning we use usable hosts. /32 is a single address; /31
+        # (RFC 3021 point-to-point) has two usable addresses and no
+        # network/broadcast to exclude; larger nets drop network/broadcast.
+        if count == 1:
+            hosts = [str(net.network_address)]
+        elif count == 2:
+            hosts = [str(net.network_address), str(net.broadcast_address)]
+        else:
+            hosts = [str(h) for h in net.hosts()]
+        if not hosts:  # paranoia: never resolve to zero hosts here
             hosts = [str(net.network_address)]
         resolved.extend(hosts)
 

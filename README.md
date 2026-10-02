@@ -65,10 +65,10 @@ written to an immutable audit table.
 ## Roadmap
 
 - **V0.0** ✅ foundation (repo, docs, architecture, privacy)
-- **V0.1** ✅ local discovery (this build)
-- **V0.2** → AI analyst: local evidence-backed explanations + remediation
-- **V0.3** → controlled validation: bounded, approved, audited confirmation
-- **V0.4** → fix & verify: retesting, finding lifecycle, trend tracking
+- **V0.1** ✅ local discovery
+- **V0.2** ✅ AI analyst: local evidence-backed explanations + remediation
+- **V0.3** ✅ controlled validation: bounded, approved, audited confirmation
+- **V0.4** → fix & verify: retesting, finding lifecycle, trend tracking (next)
 - **V0.5** → external assessment: verified outside-in worker
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.

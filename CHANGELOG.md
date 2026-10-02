@@ -5,6 +5,26 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Socket file-descriptor leaks: `agent/discovery.py::probe_port` and
+  `validator/checks.py::tcp_reprobe` now always close the socket via
+  try/finally, even when `connect()` is refused or times out. Previously a
+  /24 sweep could leak thousands of FDs on closed ports.
+- Finding titles are now stable (`Open port <port>/tcp (<service>)`): banner
+  text no longer embedded. Findings dedupe on (target, title), so a banner
+  change (e.g. service upgrade) now updates the finding and appends evidence
+  instead of spawning a duplicate. Banner still stored in evidence detail.
+- `/31` scope entries (RFC 3021) now resolve to both usable addresses;
+  previously the second address was silently dropped.
+- `POST /findings/{id}/validate`: unknown check names now return 400
+  (were conflated with 404 "finding not found"); empty `checks: []` is
+  rejected with 400; duplicate check names are collapsed so a check never
+  runs twice per validation.
+- Splunk HEC exporter: empty event batches return early instead of POSTing
+  an empty body; non-JSON success responses no longer raise in ack parsing.
+- README roadmap was stale (showed V0.1 as current); now marks V0.2/V0.3
+  done with V0.4 (fix & verify) as next.
+
 ### Added
 - Splunk integration (`exporters/splunk.py`): findings export as
   CIM-friendly Splunk events (`sourcetype` `secplatform:finding`; fields
