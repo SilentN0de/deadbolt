@@ -21,7 +21,7 @@ from common.logging_setup import configure_logging, install_crash_hook, utc_now_
 from exporters import splunk as splunk_exporter
 from storage.db import Store
 from storage.models import AuditEntry
-from validator import ValidationError, validate_finding
+from validator import ALL_CHECKS, ValidationError, validate_finding
 
 VERSION = "0.3.0"
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -143,12 +143,26 @@ def validate(req: ValidateRequest, finding_id: str):
             status_code=429,
             detail=f"validation cooling down; retry in "
                    f"{VALIDATION_COOLDOWN - (now - last):.0f}s")
+    # Validate the requested checks up front: unknown names and empty lists
+    # are client errors (400), not "finding not found" (404). Duplicates are
+    # collapsed so a check never runs twice per validation.
+    checks = req.checks
+    if checks is not None:
+        unknown = [c for c in checks if c not in ALL_CHECKS]
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown check(s) {unknown}; allowed: {list(ALL_CHECKS)}")
+        if not checks:
+            raise HTTPException(
+                status_code=400, detail="checks must not be empty")
+        checks = list(dict.fromkeys(checks))
     store = _store()
     try:
         try:
             result = validate_finding(
                 store, finding_id,
-                checks=req.checks,
+                checks=checks,
                 scope_path=req.scope or DEFAULT_SCOPE)
         except ValidationError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
