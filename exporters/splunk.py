@@ -102,6 +102,10 @@ def send_hec(events: List[Dict[str, Any]],
         raise RuntimeError(
             "HEC not configured: set SPLUNK_HEC_URL and SPLUNK_HEC_TOKEN "
             "in the environment.")
+    if not events:
+        # Nothing to send: don't POST an empty body (HEC would 400).
+        return {"mode": "hec", "endpoint": f"{url}/services/collector/event",
+                "events": 0, "ack": {}}
     endpoint = f"{url}/services/collector/event"
     payload_events = []
     for ev in events:
@@ -122,5 +126,9 @@ def send_hec(events: List[Dict[str, Any]],
         raise RuntimeError(
             f"HEC rejected the batch: HTTP {resp.status_code}: "
             f"{resp.text[:200]}")
+    try:
+        ack = resp.json() if resp.text else {}
+    except ValueError:
+        ack = {"raw": resp.text[:200]}
     return {"mode": "hec", "endpoint": endpoint, "events": len(events),
-            "ack": resp.json() if resp.text else {}}
+            "ack": ack}
