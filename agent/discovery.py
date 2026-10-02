@@ -101,36 +101,38 @@ def probe_port(host: str, port: int, limiter: RateLimiter,
     limiter.wait()
     res = ProbeResult(host=host, port=port, open=False)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(connect_timeout)
     try:
-        sock.connect((host, port))
-    except socket.timeout:
-        res.timed_out = True
-        res.error = "connect timed out"
-        return res
-    except ConnectionRefusedError:
-        res.refused = True
-        return res
-    except OSError as exc:
-        res.error = f"os error: {exc}"
-        return res
+        sock.settimeout(connect_timeout)
+        try:
+            sock.connect((host, port))
+        except socket.timeout:
+            res.timed_out = True
+            res.error = "connect timed out"
+            return res
+        except ConnectionRefusedError:
+            res.refused = True
+            return res
+        except OSError as exc:
+            res.error = f"os error: {exc}"
+            return res
 
-    res.open = True
-    # Banner grab: recv-only, short timeout, no data sent (non-intrusive).
-    sock.settimeout(banner_timeout)
-    try:
-        data = sock.recv(2048)
-        res.banner = data.decode("utf-8", errors="replace").strip()
-    except socket.timeout:
-        res.banner = ""
-    except OSError as exc:
-        res.error = f"banner read error: {exc}"
+        res.open = True
+        # Banner grab: recv-only, short timeout, no data sent (non-intrusive).
+        sock.settimeout(banner_timeout)
+        try:
+            data = sock.recv(2048)
+            res.banner = data.decode("utf-8", errors="replace").strip()
+        except socket.timeout:
+            res.banner = ""
+        except OSError as exc:
+            res.error = f"banner read error: {exc}"
+        return res
     finally:
+        # Always release the file descriptor, even on connect failure.
         try:
             sock.close()
         except OSError:
             pass
-    return res
 
 
 @dataclass
@@ -203,8 +205,11 @@ def report_to_findings(report: DiscoveryReport, store: Store) -> List[Finding]:
             svc, severity, remediation = PORTS.get(
                 r.port, ("unknown", "low", "Identify this service and restrict it to trusted networks if it is not needed.")
             )
-            banner_note = f" — banner: {r.banner[:120]!r}" if r.banner else " — no banner returned"
-            title = f"Open port {r.port}/tcp ({svc}){banner_note}"
+            # Title is intentionally stable (no banner text): findings dedupe
+            # on (target, title), and a banner change (e.g. service upgrade)
+            # must update the finding, not spawn a duplicate. The banner
+            # lives in the evidence detail.
+            title = f"Open port {r.port}/tcp ({svc})"
             finding = Finding.new(
                 target=host, title=title, severity=severity,
                 first_seen=now, remediation=remediation,

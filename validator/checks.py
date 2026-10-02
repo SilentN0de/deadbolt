@@ -47,42 +47,44 @@ def tcp_reprobe(host: str, port: int,
     """Re-connect to host:port. Open -> confirmed; refused -> contradicted."""
     detail: Dict = {"host": host, "port": port}
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
     try:
-        sock.connect((host, port))
-    except ConnectionRefusedError:
-        return CheckResult("tcp_reprobe", True, "contradicted",
-                           f"{host}:{port} refused the connection — the service "
-                           "appears to be gone.", {**detail, "open": False})
-    except socket.timeout:
-        return CheckResult("tcp_reprobe", True, "inconclusive",
-                           f"{host}:{port} timed out on re-probe — host may be "
-                           "down or filtering.", {**detail, "open": False,
-                                                   "timed_out": True})
-    except OSError as exc:
-        return CheckResult("tcp_reprobe", False, "inconclusive",
-                           f"re-probe of {host}:{port} failed: {exc}",
-                           {**detail, "error": str(exc)})
+        sock.settimeout(timeout)
+        try:
+            sock.connect((host, port))
+        except ConnectionRefusedError:
+            return CheckResult("tcp_reprobe", True, "contradicted",
+                               f"{host}:{port} refused the connection — the service "
+                               "appears to be gone.", {**detail, "open": False})
+        except socket.timeout:
+            return CheckResult("tcp_reprobe", True, "inconclusive",
+                               f"{host}:{port} timed out on re-probe — host may be "
+                               "down or filtering.", {**detail, "open": False,
+                                                       "timed_out": True})
+        except OSError as exc:
+            return CheckResult("tcp_reprobe", False, "inconclusive",
+                               f"re-probe of {host}:{port} failed: {exc}",
+                               {**detail, "error": str(exc)})
 
-    # Connected: recv-only banner grab, nothing sent.
-    banner = ""
-    sock.settimeout(BANNER_TIMEOUT)
-    try:
-        banner = sock.recv(2048).decode("utf-8", errors="replace").strip()
-    except OSError:
-        pass
+        # Connected: recv-only banner grab, nothing sent.
+        banner = ""
+        sock.settimeout(BANNER_TIMEOUT)
+        try:
+            banner = sock.recv(2048).decode("utf-8", errors="replace").strip()
+        except OSError:
+            pass
+        detail.update({"open": True, "banner": banner[:512]})
+        return CheckResult(
+            "tcp_reprobe", True, "confirmed",
+            f"{host}:{port} is still open — finding confirmed."
+            + (f" Banner: {banner[:80]!r}." if banner else " No banner returned."),
+            detail,
+        )
     finally:
+        # Always release the file descriptor, even on connect failure.
         try:
             sock.close()
         except OSError:
             pass
-    detail.update({"open": True, "banner": banner[:512]})
-    return CheckResult(
-        "tcp_reprobe", True, "confirmed",
-        f"{host}:{port} is still open — finding confirmed."
-        + (f" Banner: {banner[:80]!r}." if banner else " No banner returned."),
-        detail,
-    )
 
 
 # ---------------------------------------------------------------------------
