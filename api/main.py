@@ -19,11 +19,14 @@ from agent.scope import ScopeError
 from analyst import explain_finding
 from common.logging_setup import configure_logging, install_crash_hook, utc_now_iso
 from exporters import splunk as splunk_exporter
+from lifecycle import IllegalTransition, transition_finding
+from retest import RetestError, retest_all, retest_finding
 from storage.db import Store
-from storage.models import AuditEntry
+from storage.models import STATUSES, AuditEntry
+from trends import get_summary, get_trends
 from validator import ALL_CHECKS, ValidationError, validate_finding
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "findings.db")
 DEFAULT_SCOPE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -51,10 +54,22 @@ class ValidateRequest(BaseModel):
     checks: Optional[List[str]] = None  # subset of tcp_reprobe, tls_certificate, banner_intel
 
 
+class RetestBatchRequest(BaseModel):
+    status: Optional[str] = None  # "open" (default: suspected+confirmed) or one status
+
+
+class StatusChangeRequest(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
 # Cooldown between validations of the same finding (seconds): prevents
 # accidental double-submits from re-probing the target.
 VALIDATION_COOLDOWN = 10.0
 _last_validation: Dict[str, float] = {}
+# Same idea for single-finding retests (batch retests are explicit).
+RETEST_COOLDOWN = 10.0
+_last_retest: Dict[str, float] = {}
 
 
 @app.get("/health")
@@ -182,6 +197,122 @@ def list_validations(finding_id: str):
         if store.get_finding(finding_id) is None:
             raise HTTPException(status_code=404, detail="finding not found")
         return store.list_validations(finding_id)
+    finally:
+        store.close()
+
+
+@app.post("/findings/{finding_id}/retest", status_code=201)
+def retest_one(finding_id: str, scope: Optional[str] = None):
+    """Re-probe one finding against the target's current state.
+
+    Outcomes: re-observed (status kept, last_seen bumped), remediated
+    (-> fixed), still-fixed / not-present, or inconclusive. The finding's
+    target must be inside the authorized scope, else 400.
+    """
+    now = time.monotonic()
+    last = _last_retest.get(finding_id, 0.0)
+    if now - last < RETEST_COOLDOWN:
+        raise HTTPException(
+            status_code=429,
+            detail=f"retest cooling down; retry in "
+                   f"{RETEST_COOLDOWN - (now - last):.0f}s")
+    store = _store()
+    try:
+        try:
+            result = retest_finding(
+                store, finding_id, scope_path=scope or DEFAULT_SCOPE)
+        except RetestError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ScopeError as exc:
+            raise HTTPException(status_code=400, detail=f"scope refused: {exc}")
+    finally:
+        store.close()
+    _last_retest[finding_id] = time.monotonic()
+    return result
+
+
+@app.post("/retest", status_code=201)
+def retest_batch(req: RetestBatchRequest, scope: Optional[str] = None):
+    """Retest every finding matching the status filter (default: open).
+
+    Records a trend snapshot when the batch completes. Per-finding
+    results are returned; a single finding's failure doesn't abort
+    the batch.
+    """
+    store = _store()
+    try:
+        try:
+            result = retest_all(
+                store, status_filter=req.status,
+                scope_path=scope or DEFAULT_SCOPE)
+        except RetestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except ScopeError as exc:
+            raise HTTPException(status_code=400, detail=f"scope refused: {exc}")
+    finally:
+        store.close()
+    return result
+
+
+@app.post("/findings/{finding_id}/status")
+def change_status(req: StatusChangeRequest, finding_id: str):
+    """Move a finding through the lifecycle state machine.
+
+    400 on unknown status or illegal transition (the response names the
+    allowed next statuses). Every transition is recorded in finding_events.
+    """
+    if req.status not in STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown status {req.status!r}; "
+                   f"must be one of {list(STATUSES)}")
+    store = _store()
+    try:
+        try:
+            event = transition_finding(
+                store, finding_id, req.status,
+                actor="operator", note=req.note or "")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except IllegalTransition as exc:
+            raise HTTPException(status_code=400, detail={
+                "error": str(exc),
+                "current": exc.old_status,
+                "allowed": exc.allowed,
+            })
+    finally:
+        store.close()
+    return event
+
+
+@app.get("/findings/{finding_id}/events")
+def list_events(finding_id: str, limit: int = Query(200, ge=1, le=1000)):
+    """Append-only lifecycle timeline for a finding."""
+    store = _store()
+    try:
+        if store.get_finding(finding_id) is None:
+            raise HTTPException(status_code=404, detail="finding not found")
+        return store.list_finding_events(finding_id, limit=limit)
+    finally:
+        store.close()
+
+
+@app.get("/trends")
+def trends(days: int = Query(30, ge=1, le=365)):
+    """Per-day time series of finding counts grouped by status."""
+    store = _store()
+    try:
+        return get_trends(store, days=days)
+    finally:
+        store.close()
+
+
+@app.get("/trends/summary")
+def trends_summary(days: int = Query(30, ge=1, le=365)):
+    """Current totals, period activity, and mean time-to-fix."""
+    store = _store()
+    try:
+        return get_summary(store, days=days)
     finally:
         store.close()
 

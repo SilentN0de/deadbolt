@@ -1,4 +1,4 @@
-# Data Model (V0.1)
+# Data Model (V0.4)
 
 Normalized finding/evidence model. Python dataclasses live in
 `storage/models.py`; the SQLite schema in `storage/schema.sql`.
@@ -18,11 +18,15 @@ target **updates** the row instead of duplicating it.
 | `first_seen` | TEXT | ISO-8601 UTC of first observation |
 | `last_seen` | TEXT | ISO-8601 UTC of most recent observation |
 | `remediation` | TEXT | Human-readable guidance |
-| `retest_history` | TEXT | JSON array, e.g. `[{"timestamp": "...", "event": "re-observed", "severity": "info"}]` |
+| `retest_history` | TEXT | JSON array of retest/lifecycle events, e.g. `[{"timestamp": "...", "event": "re-observed", "detail": "..."}, {"timestamp": "...", "event": "remediated", "detail": "..."}]` |
 
-**Status lifecycle:** discovery alone can only produce `suspected`. Later
-stages move findings to `confirmed` (V0.3 validation), `fixed` (V0.4 retest),
-or `false-positive` / `accepted-risk` by operator decision.
+**Status lifecycle (V0.4):** discovery alone can only produce `suspected`.
+Validation moves `suspected` → `confirmed` / `false-positive`. Retest moves
+open findings → `fixed` when the service is gone, or `fixed` → `confirmed`
+on regression. Operators move findings through the explicit state machine
+in `lifecycle.py` (`POST /findings/{id}/status`). Every transition and every
+retest is recorded in the append-only `finding_events` table below.
+See `docs/lifecycle.md`.
 
 ## evidence
 
@@ -59,3 +63,26 @@ One row per discovery execution.
 timestamp, event, scope file + hash (NULL when the file was missing),
 authorization flags, target count, `decision` (`allow`/`deny`), reason.
 `BEFORE UPDATE` / `BEFORE DELETE` triggers abort any mutation.
+
+## finding_events (V0.4)
+
+**Append-only** lifecycle timeline, one row per status transition or retest
+attempt (triggers abort UPDATE/DELETE like `audit_log`).
+
+| Column | Notes |
+| --- | --- |
+| `finding_id` | → `findings(id)`, cascade delete |
+| `timestamp` | ISO-8601 UTC |
+| `event` | `status_changed` \| `retest` \| `note` |
+| `old_status` / `new_status` | statuses before/after |
+| `actor` | `operator` \| `retest` \| `system` (validation-driven) |
+| `detail` | JSON: operator note, retest summary, validation outcome |
+
+## finding_snapshots (V0.4)
+
+Point-in-time counts for trend tracking: one row per `(status, severity)`
+per snapshot batch (`timestamp`, `run_id` NULL for retest batches, `status`,
+`severity`, `count`). Written automatically when a discovery run completes
+and after every retest batch. `GET /trends` buckets them per day (latest
+batch wins); `GET /trends/summary` derives current totals and
+mean-time-to-fix from `finding_events`.

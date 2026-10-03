@@ -39,8 +39,9 @@
 </style>
 </head>
 <body>
-<h1>🔒 Local Security Assessment Platform <span class="sub">v0.3</span></h1>
+<h1>🔒 Local Security Assessment Platform <span class="sub">v0.4</span></h1>
 <div class="sub">Local-first findings. Nothing leaves this machine.</div>
+<div id="trends" style="display: flex; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap;"></div>
 <div class="meta" id="meta">loading…</div>
 <div id="exportbar" style="margin-bottom: 1rem;">
   <button id="export-btn" class="vbtn" style="padding: 0.4rem 0.9rem; border: 1px solid #30363d; border-radius: 6px; background: #1f6feb; color: #fff; cursor: pointer; font-size: 0.85rem;">⬆ Export to Splunk</button>
@@ -60,6 +61,7 @@
 <div id="detail" hidden></div>
 <script>
 async function load() {
+  loadTrends();
   try {
     const res = await fetch('/findings');
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -183,6 +185,33 @@ async function loadValidationHistory(findingId) {
       escapeHtml(v.status_before) + ' → ' + escapeHtml(v.status_after) + ')</span></li>').join('');
     box.innerHTML = '<h3>Validation history</h3><ul>' + rows + '</ul>';
   } catch (err) { /* history is best-effort */ }
+}
+async function loadTrends() {
+  const box = document.getElementById('trends');
+  try {
+    const res = await fetch('/trends/summary?days=30');
+    if (!res.ok) return;
+    const t = await res.json();
+    const mttf = t.mean_time_to_fix_seconds == null
+      ? '—'
+      : t.mean_time_to_fix_seconds < 90
+        ? Math.round(t.mean_time_to_fix_seconds) + 's'
+        : (t.mean_time_to_fix_seconds / 3600).toFixed(1) + 'h';
+    const cards = [
+      ['Open', t.open, '#ffa657'],
+      ['Fixed', t.fixed_total, '#7ee787'],
+      ['False positives', t.false_positive_total, '#8b949e'],
+      ['New (30d)', t.new_in_period, '#79c0ff'],
+      ['Mean time to fix', mttf, '#e6edf3'],
+    ];
+    box.innerHTML = cards.map(([label, value, color]) =>
+      '<div style="flex: 1 1 8rem; min-width: 8rem; padding: 0.6rem 0.9rem; ' +
+      'border: 1px solid #30363d; border-radius: 8px; background: #161b22;">' +
+      '<div style="font-size: 1.3rem; font-weight: 600; color: ' + color + ';">' +
+      value + '</div>' +
+      '<div class="meta" style="margin: 0;">' + label + '</div></div>'
+    ).join('');
+  } catch (err) { /* trends are best-effort */ }
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>

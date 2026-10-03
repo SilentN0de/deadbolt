@@ -3,6 +3,56 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0] — 2026-10-03
+
+### Added
+- Retesting (`retest/`): `retest_finding()` re-runs the applicable
+  read-only probes (tcp re-probe, TLS cert inspection, banner intel —
+  the same pipeline validation uses) against a finding's target as it is
+  right now. Outcomes: `re-observed` (status kept, `last_seen` refreshed,
+  or `fixed`→`confirmed` regression), `remediated` (`confirmed`/`suspected`
+  →`fixed`), `still-fixed` / `not-present`, `inconclusive` (status
+  unchanged). Every retest appends to the finding's `retest_history` JSON,
+  stores per-check evidence, writes to `finding_events`, and is
+  audit-logged. `retest_all()` batch helper retests open findings and
+  records a trend snapshot on completion.
+- Finding lifecycle (`lifecycle.py`): explicit state machine
+  (`suspected`→`confirmed`/`fixed`/`false-positive`;
+  `confirmed`→`fixed`/`accepted-risk`/`false-positive`;
+  `fixed`→`confirmed`; `accepted-risk`→`confirmed`;
+  `false-positive`→`suspected`). Retest- and validation-driven
+  transitions go through the same machine (actor `retest` / `system`).
+- Append-only `finding_events` table (immutable via triggers, like
+  `audit_log`): every status transition and retest, with actor and detail
+  JSON. Validation-driven transitions are now recorded there too.
+- Trend tracking (`trends.py` + `finding_snapshots` table): snapshots
+  written automatically when a discovery run completes and after every
+  retest batch. `GET /trends?days=30` (per-day series by status/severity),
+  `GET /trends/summary` (open, fixed, false-positive totals, new findings
+  in period, null-safe mean time-to-fix from `finding_events`).
+- New API endpoints: `POST /findings/{id}/retest` (10s cooldown),
+  `POST /retest` (batch), `POST /findings/{id}/status` (400 + allowed
+  next statuses on illegal transitions), `GET /findings/{id}/events`.
+- Dashboard: trend stat cards (open / fixed / false positives / new in
+  30d / mean time to fix) from `GET /trends/summary`.
+- `docs/lifecycle.md`: state machine diagram, retest flow, API reference.
+- Sim lab: `disable_service()` / `enable_service()` (port-preserving) to
+  simulate remediation and regression.
+- 50 new tests (114 total): retest outcomes incl. remediate/regress
+  cycle, every illegal lifecycle transition rejected, snapshot/trend
+  math incl. null mean-time-to-fix, new API endpoints.
+- `scripts/simulate_e2e.py`: V0.4 scenario against the fake lab —
+  retest-all, disable→fixed, re-enable→regression, operator transitions
+  incl. an illegal one, trend assertions, and API-level checks.
+
+### Changed
+- Schema migration is now documented: `storage/schema.sql` is idempotent
+  (`IF NOT EXISTS`), so opening an older `findings.db` with the new code
+  automatically adds `finding_events` / `finding_snapshots`.
+- `validator/runner.py`: scope-enforcement audit event is parameterizable
+  (retest logs `retest.attempt`); validation-driven status changes are
+  recorded in `finding_events` (actor `system`).
+
 ## [Unreleased]
 
 ### Fixed
