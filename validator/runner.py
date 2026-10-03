@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 from agent.scope import ScopeError, load_scope
 from common.logging_setup import utc_now_iso
 from storage.db import Store, sha256_file, sha256_text
-from storage.models import AuditEntry, Evidence, Finding, Validation
+from storage.models import AuditEntry, Evidence, Finding, FindingEvent, Validation
 
 from .checks import (CheckResult, banner_intel, tcp_reprobe, tls_certificate,
                      TLS_PORTS)
@@ -56,7 +56,8 @@ def _host_port(finding: Finding) -> tuple[str, Optional[int]]:
     return finding.target, port
 
 
-def _enforce_scope(host: str, scope_path: str, store: Store):
+def _enforce_scope(host: str, scope_path: str, store: Store,
+                   event: str = "validation.attempt"):
     """Raise ScopeError (after audit-deny) unless host is scope-authorized.
     Returns the ScopeDecision on allow."""
     started = utc_now_iso()
@@ -64,7 +65,7 @@ def _enforce_scope(host: str, scope_path: str, store: Store):
         decision = load_scope(scope_path)
     except ScopeError as exc:
         store.audit(AuditEntry(
-            id=None, timestamp=started, event="validation.attempt",
+            id=None, timestamp=started, event=event,
             scope_file=os.path.abspath(scope_path), scope_hash=None,
             authorization_acknowledged=False, target_count=0,
             decision="deny", reason=str(exc)))
@@ -73,7 +74,7 @@ def _enforce_scope(host: str, scope_path: str, store: Store):
         reason = (f"validation target {host} is not in the authorized scope "
                   f"({scope_path})")
         store.audit(AuditEntry(
-            id=None, timestamp=started, event="validation.attempt",
+            id=None, timestamp=started, event=event,
             scope_file=os.path.abspath(scope_path),
             scope_hash=sha256_file(scope_path),
             authorization_acknowledged=decision.authorization_acknowledged,
@@ -176,6 +177,12 @@ def validate_finding(store: Store, finding_id: str,
             finding.id, status_after,
             event=f"validation:{outcome}",
             timestamp=finished)
+        # Keep the append-only lifecycle timeline complete.
+        store.add_finding_event(FindingEvent(
+            id=None, finding_id=finding.id, timestamp=finished,
+            event="status_changed", old_status=status_before,
+            new_status=status_after, actor="system",
+            detail={"via": "validation", "outcome": outcome}))
 
     validation = Validation(
         id=None, finding_id=finding.id, timestamp=finished,

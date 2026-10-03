@@ -12,8 +12,8 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
-from .models import (AuditEntry, Evidence, Finding, Run, STATUSES, Validation,
-                     dumps, loads)
+from .models import (AuditEntry, Evidence, Finding, FindingEvent, Run,
+                     STATUSES, Validation, dumps, loads)
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
 
@@ -34,6 +34,10 @@ class Store:
         self.init_schema()
 
     def init_schema(self) -> None:
+        # Migration pattern: schema.sql is idempotent (CREATE TABLE/INDEX
+        # IF NOT EXISTS, DROP TRIGGER IF EXISTS), so re-executing it on
+        # every Store() init automatically upgrades existing findings.db
+        # files — new tables appear, old data is untouched.
         with open(_SCHEMA_PATH, "r", encoding="utf-8") as fh:
             self._conn.executescript(fh.read())
         self._conn.commit()
@@ -240,6 +244,103 @@ class Store:
                 "UPDATE findings SET status = ?, retest_history = ? WHERE id = ?",
                 (status, dumps(history), finding_id),
             )
+
+    # -- finding lifecycle events + trend snapshots (V0.4) ------------------
+    def add_finding_event(self, event: FindingEvent) -> int:
+        """Append one lifecycle event. finding_events is append-only."""
+        with self._tx() as conn:
+            cur = conn.execute(
+                """INSERT INTO finding_events
+                   (finding_id, timestamp, event, old_status, new_status,
+                    actor, detail)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    event.finding_id,
+                    event.timestamp,
+                    event.event,
+                    event.old_status,
+                    event.new_status,
+                    event.actor,
+                    dumps(event.detail),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_finding_events(self, finding_id: str,
+                            limit: int = 200) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM finding_events WHERE finding_id = ? "
+            "ORDER BY id LIMIT ?",
+            (finding_id, limit),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = loads(d["detail"]) if d["detail"] else {}
+            out.append(d)
+        return out
+
+    def record_snapshot(self, timestamp: str,
+                        run_id: Optional[int] = None) -> int:
+        """Write one point-in-time count per (status, severity).
+
+        Called automatically when a discovery run completes and after every
+        retest batch. Returns the number of snapshot rows written.
+        """
+        rows = self._conn.execute(
+            "SELECT status, severity, COUNT(*) AS n FROM findings "
+            "GROUP BY status, severity"
+        ).fetchall()
+        with self._tx() as conn:
+            for r in rows:
+                conn.execute(
+                    """INSERT INTO finding_snapshots
+                       (timestamp, run_id, status, severity, count)
+                       VALUES (?,?,?,?,?)""",
+                    (timestamp, run_id, r["status"], r["severity"],
+                     r["n"]),
+                )
+        return len(rows)
+
+    def list_snapshots(self, since: str,
+                       limit: int = 10000) -> List[Dict[str, Any]]:
+        """Raw snapshot rows at/after `since` (ISO-8601 UTC), oldest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM finding_snapshots WHERE timestamp >= ? "
+            "ORDER BY timestamp ASC, id ASC LIMIT ?",
+            (since, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def append_retest_event(self, finding_id: str, event: Dict[str, Any],
+                            last_seen: Optional[str] = None) -> None:
+        """Append an entry to a finding's retest_history JSON.
+
+        Optionally refreshes last_seen (used on re-observation). Does not
+        change the finding's status; use update_finding_status for that.
+        """
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT retest_history FROM findings WHERE id = ?",
+                (finding_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"finding not found: {finding_id}")
+            history = loads(row["retest_history"])
+            if not isinstance(history, list):
+                history = []
+            history.append(event)
+            if last_seen is not None:
+                conn.execute(
+                    "UPDATE findings SET retest_history = ?, last_seen = ? "
+                    "WHERE id = ?",
+                    (dumps(history), last_seen, finding_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE findings SET retest_history = ? WHERE id = ?",
+                    (dumps(history), finding_id),
+                )
 
     # -- runs ---------------------------------------------------------------
     def create_run(self, run: Run) -> int:

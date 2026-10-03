@@ -108,3 +108,56 @@ CREATE TABLE IF NOT EXISTS validations (
     status_after  TEXT NOT NULL DEFAULT 'suspected'
 );
 CREATE INDEX IF NOT EXISTS idx_validations_finding ON validations(finding_id);
+
+-- ----------------------------------------------------------------------------
+-- finding_events: append-only lifecycle timeline per finding (V0.4).
+-- Every status transition (operator, retest, or validation-driven) and every
+-- retest attempt is recorded here. Application code must never UPDATE or
+-- DELETE rows here; the triggers below enforce that like audit_log.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS finding_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id    TEXT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    timestamp     TEXT NOT NULL,           -- ISO-8601 UTC
+    event         TEXT NOT NULL CHECK (event IN
+                    ('status_changed','retest','note')),
+    old_status    TEXT NOT NULL,
+    new_status    TEXT NOT NULL,
+    actor         TEXT NOT NULL CHECK (actor IN
+                    ('operator','retest','system')),
+    detail        TEXT NOT NULL DEFAULT '{}' -- JSON: notes, retest summary, ...
+);
+CREATE INDEX IF NOT EXISTS idx_finding_events_finding
+    ON finding_events(finding_id);
+CREATE INDEX IF NOT EXISTS idx_finding_events_ts
+    ON finding_events(timestamp);
+
+DROP TRIGGER IF EXISTS finding_events_no_update;
+CREATE TRIGGER finding_events_no_update
+BEFORE UPDATE ON finding_events
+BEGIN
+    SELECT RAISE(ABORT, 'finding_events is immutable: UPDATE not permitted');
+END;
+
+DROP TRIGGER IF EXISTS finding_events_no_delete;
+CREATE TRIGGER finding_events_no_delete
+BEFORE DELETE ON finding_events
+BEGIN
+    SELECT RAISE(ABORT, 'finding_events is immutable: DELETE not permitted');
+END;
+
+-- ----------------------------------------------------------------------------
+-- finding_snapshots: point-in-time counts for trend tracking (V0.4).
+-- One row per (status, severity) per snapshot batch; written automatically
+-- when a discovery run completes and after every retest batch.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS finding_snapshots (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp  TEXT NOT NULL,              -- ISO-8601 UTC of the snapshot
+    run_id     INTEGER,                    -- discovery run id, or NULL
+    status     TEXT NOT NULL,
+    severity   TEXT NOT NULL,
+    count      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_finding_snapshots_ts
+    ON finding_snapshots(timestamp);

@@ -295,6 +295,7 @@ def run_discovery(scope_path: str, db_path: str,
             "findings_created": len(findings),
         }
         store.finish_run(run_id, "completed", summary, finished)
+        store.record_snapshot(finished, run_id=run_id)
         log.info("discovery run %d completed: %s", run_id, summary)
         store.close()
         return {"run_id": run_id, "status": "completed", "summary": summary,

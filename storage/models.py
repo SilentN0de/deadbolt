@@ -13,6 +13,8 @@ from typing import Any, Dict, List
 
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 STATUSES = ("suspected", "confirmed", "accepted-risk", "fixed", "false-positive")
+EVENT_TYPES = ("status_changed", "retest", "note")
+ACTORS = ("operator", "retest", "system")
 
 
 @dataclass
@@ -104,6 +106,32 @@ class Validation:
     def __post_init__(self) -> None:
         if self.outcome not in ("confirmed", "false-positive", "intel", "inconclusive"):
             raise ValueError(f"invalid outcome: {self.outcome!r}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class FindingEvent:
+    """One append-only lifecycle event for a finding (V0.4)."""
+    id: int | None
+    finding_id: str
+    timestamp: str          # ISO-8601 UTC
+    event: str              # "status_changed" | "retest" | "note"
+    old_status: str
+    new_status: str
+    actor: str              # "operator" | "retest" | "system"
+    detail: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.event not in EVENT_TYPES:
+            raise ValueError(f"invalid event: {self.event!r}")
+        if self.old_status not in STATUSES:
+            raise ValueError(f"invalid old_status: {self.old_status!r}")
+        if self.new_status not in STATUSES:
+            raise ValueError(f"invalid new_status: {self.new_status!r}")
+        if self.actor not in ACTORS:
+            raise ValueError(f"invalid actor: {self.actor!r}")
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

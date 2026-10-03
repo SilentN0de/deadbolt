@@ -31,12 +31,13 @@ Handler = Callable[[socket.socket], None]
 
 
 class _TCPServer:
-    def __init__(self, handler: Handler, tls_cert: Optional[str] = None,
+    def __init__(self, handler: Handler, port: int = 0,
+                 tls_cert: Optional[str] = None,
                  tls_key: Optional[str] = None):
         self._handler = handler
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind(("127.0.0.1", 0))
+        self._sock.bind(("127.0.0.1", port))
         self._sock.listen(8)
         self.port = self._sock.getsockname()[1]
         self._stop = threading.Event()
@@ -120,6 +121,7 @@ class SimulatedLab:
 
     def __init__(self):
         self._servers: Dict[str, _TCPServer] = {}
+        self._specs: Dict[str, tuple] = {}  # name -> (handler, tls_cert, tls_key)
         self._workdir: Optional[tempfile.TemporaryDirectory] = None
         self.ports: Dict[str, Optional[int]] = {}
 
@@ -143,10 +145,38 @@ class SimulatedLab:
         log.info("sim lab up: %s", self.ports)
         return self
 
-    def _add(self, name: str, handler: Handler, tls_cert=None, tls_key=None):
-        srv = _TCPServer(handler, tls_cert=tls_cert, tls_key=tls_key).start()
+    def _add(self, name: str, handler: Handler, tls_cert=None, tls_key=None,
+             port: int = 0):
+        srv = _TCPServer(handler, port=port, tls_cert=tls_cert,
+                         tls_key=tls_key).start()
         self._servers[name] = srv
+        self._specs[name] = (handler, tls_cert, tls_key)
         self.ports[name] = srv.port
+
+    def disable_service(self, name: str) -> None:
+        """Take a fake service offline (simulates remediation).
+
+        The port number is remembered so enable_service() can bring the
+        same service back on the same port.
+        """
+        srv = self._servers.pop(name, None)
+        if srv is None:
+            raise KeyError(f"no such sim service: {name!r}")
+        srv.stop()
+        log.info("sim service %s disabled (port %s now closed)",
+                 name, self.ports[name])
+
+    def enable_service(self, name: str) -> None:
+        """Bring a previously disabled fake service back on its old port."""
+        if name in self._servers:
+            raise KeyError(f"sim service {name!r} is already running")
+        if name not in self._specs:
+            raise KeyError(f"no such sim service: {name!r}")
+        handler, tls_cert, tls_key = self._specs[name]
+        self._add(name, handler, tls_cert=tls_cert, tls_key=tls_key,
+                  port=self.ports[name] or 0)
+        log.info("sim service %s re-enabled on port %s", name,
+                 self.ports[name])
 
     def __exit__(self, *exc) -> None:
         for srv in self._servers.values():
