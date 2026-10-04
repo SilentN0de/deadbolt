@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from .models import (AuditEntry, Evidence, Finding, FindingEvent, Run,
                      STATUSES, Validation, dumps, loads)
+from common.logging_setup import utc_now_iso
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
 
@@ -311,6 +312,30 @@ class Store:
             (since, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- settings ---------------------------------------------------------
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """Read a JSON setting. Returns `default` when unset or corrupt."""
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return default
+        try:
+            return loads(row["value"])
+        except Exception:
+            return default
+
+    def set_setting(self, key: str, value: Any) -> None:
+        """Write a JSON setting (upsert)."""
+        with self._tx() as conn:
+            conn.execute(
+                """INSERT INTO settings (key, value, updated_at)
+                   VALUES (?,?,?)
+                   ON CONFLICT(key) DO UPDATE SET
+                     value = excluded.value,
+                     updated_at = excluded.updated_at""",
+                (key, dumps(value), utc_now_iso()),
+            )
 
     def append_retest_event(self, finding_id: str, event: Dict[str, Any],
                             last_seen: Optional[str] = None) -> None:

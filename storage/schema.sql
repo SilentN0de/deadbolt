@@ -161,3 +161,13 @@ CREATE TABLE IF NOT EXISTS finding_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_finding_snapshots_ts
     ON finding_snapshots(timestamp);
+
+-- ----------------------------------------------------------------------------
+-- settings: key/value store for operator configuration (scheduler, etc.).
+-- Values are JSON. Written only by explicit operator/API actions.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,   -- JSON
+    updated_at  TEXT NOT NULL    -- ISO-8601 UTC
+);

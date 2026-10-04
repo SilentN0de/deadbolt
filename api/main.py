@@ -7,8 +7,11 @@ this machine unless the operator deliberately changes the bind address.
 from __future__ import annotations
 
 import os
+import threading
 import time
-from typing import Dict, List, Optional
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -17,10 +20,15 @@ from pydantic import BaseModel
 from agent.discovery import run_discovery
 from agent.scope import ScopeError
 from analyst import explain_finding
-from common.logging_setup import configure_logging, install_crash_hook, utc_now_iso
+from common.logging_setup import (configure_logging, install_crash_hook,
+                                  utc_now_iso)
 from exporters import splunk as splunk_exporter
 from lifecycle import IllegalTransition, transition_finding
 from retest import RetestError, retest_all, retest_finding
+from scheduler import (ScheduleConfig, ScheduleError, compute_next_run,
+                       config_from_dict, config_to_dict, run_scheduled_scan)
+from scheduler.engine import (KEY_CONFIG, KEY_LAST_RESULT, KEY_LAST_RUN,
+                              KEY_NEXT_RUN, SchedulerThread)
 from storage.db import Store
 from storage.models import STATUSES, AuditEntry
 from trends import get_summary, get_trends
@@ -37,7 +45,22 @@ DB_PATH = os.environ.get("SECURITY_PLATFORM_DB", DEFAULT_DB)
 configure_logging()
 install_crash_hook()
 
-app = FastAPI(title="Deadbolt", version=VERSION)
+_scheduler_thread: Optional[SchedulerThread] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the scheduled-scan background thread on boot (uvicorn only)."""
+    global _scheduler_thread
+    _scheduler_thread = SchedulerThread(DB_PATH)
+    _scheduler_thread.start()
+    yield
+    if _scheduler_thread is not None:
+        _scheduler_thread.stop()
+        _scheduler_thread = None
+
+
+app = FastAPI(title="Deadbolt", version=VERSION, lifespan=lifespan)
 
 
 def _store() -> Store:
@@ -365,6 +388,118 @@ def export_splunk(req: ExportRequest):
         return result
     finally:
         store.close()
+
+
+def _schedule_status(store: Store) -> Dict[str, Any]:
+    """Current schedule config + last/next run bookkeeping for the dashboard."""
+    raw = store.get_setting(KEY_CONFIG)
+    try:
+        cfg = config_from_dict(raw) if raw else ScheduleConfig()
+    except ScheduleError:
+        cfg = ScheduleConfig()
+    next_run = store.get_setting(KEY_NEXT_RUN)
+    if next_run is None and cfg.enabled:
+        # Enabled but never scheduled (e.g. config written by hand): show
+        # when the first run will happen.
+        last_raw = store.get_setting(KEY_LAST_RUN)
+        last_run = (datetime.fromisoformat(last_raw) if last_raw else None)
+        next_run = compute_next_run(cfg, datetime.now(),
+                                     last_run=last_run).isoformat()
+    return {
+        "config": config_to_dict(cfg),
+        "last_run": store.get_setting(KEY_LAST_RUN),
+        "next_run": next_run,
+        "last_result": store.get_setting(KEY_LAST_RESULT),
+    }
+
+
+@app.get("/schedule")
+def get_schedule():
+    """Show the automatic-scan schedule and its last/next run."""
+    store = _store()
+    try:
+        return _schedule_status(store)
+    finally:
+        store.close()
+
+
+@app.put("/schedule")
+def put_schedule(body: Dict[str, Any]):
+    """Replace the automatic-scan schedule. 400 on invalid config.
+
+    Body is the full schedule object, e.g.
+    {"enabled": true, "cadence": "daily", "time": "02:00",
+     "weekday": 0, "interval_hours": 24, "auto_validate": true,
+     "scope_path": "", "ports": null}
+    Times are HH:MM in the server's local timezone.
+    """
+    try:
+        cfg = config_from_dict(body or {})
+    except ScheduleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    started = utc_now_iso()
+    store = _store()
+    try:
+        store.set_setting(KEY_CONFIG, config_to_dict(cfg))
+        if cfg.enabled:
+            last_raw = store.get_setting(KEY_LAST_RUN)
+            last_run = (datetime.fromisoformat(last_raw)
+                        if last_raw else None)
+            nxt = compute_next_run(cfg, datetime.now(), last_run=last_run)
+            store.set_setting(KEY_NEXT_RUN, nxt.isoformat())
+        else:
+            store.set_setting(KEY_NEXT_RUN, None)
+        store.audit(AuditEntry(
+            id=None, timestamp=started, event="schedule.update",
+            scope_file="", scope_hash=None,
+            authorization_acknowledged=False,
+            target_count=0,
+            decision="allow",
+            reason=f"enabled={cfg.enabled} cadence={cfg.cadence}"))
+        return _schedule_status(store)
+    finally:
+        store.close()
+
+
+def _run_scan_background(db_path: str, cfg: ScheduleConfig) -> None:
+    try:
+        run_scheduled_scan(db_path, cfg)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
+
+@app.post("/schedule/run")
+def run_schedule_now(sync: bool = Query(False)):
+    """Trigger a scheduled-style scan immediately.
+
+    Uses the saved schedule's scope/ports/auto_validate settings.
+    Runs in the background by default (202 "started"); pass
+    ?sync=true to wait for the result (handy for scripts/tests).
+    """
+    store = _store()
+    try:
+        raw = store.get_setting(KEY_CONFIG)
+        try:
+            cfg = config_from_dict(raw) if raw else ScheduleConfig()
+        except ScheduleError:
+            cfg = ScheduleConfig()
+        store.audit(AuditEntry(
+            id=None, timestamp=utc_now_iso(), event="schedule.run",
+            scope_file="", scope_hash=None,
+            authorization_acknowledged=False,
+            target_count=0, decision="allow", reason="manual trigger"))
+    finally:
+        store.close()
+    if sync:
+        result = run_scheduled_scan(DB_PATH, cfg)
+        return JSONResponse({"status": "completed", "result": result},
+                            status_code=200)
+    thread = threading.Thread(
+        target=_run_scan_background, args=(DB_PATH, cfg),
+        name="deadbolt-manual-scan", daemon=True)
+    thread.start()
+    return JSONResponse({"status": "started"}, status_code=202)
 
 
 @app.get("/", include_in_schema=False)

@@ -51,6 +51,29 @@
   </select>
   <span id="export-result" class="meta" style="margin-left: 0.75rem;"></span>
 </div>
+<div id="schedbar" style="margin-bottom: 1.25rem; padding: 0.9rem 1rem; border: 1px solid #30363d; border-radius: 8px; background: #161b22; max-width: 70rem;">
+  <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+    <strong style="font-size: 0.95rem;">⏰ Scheduled scans</strong>
+    <label style="font-size: 0.85rem;"><input type="checkbox" id="sched-enabled"> enabled</label>
+    <select id="sched-cadence" style="background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.35rem; font-size: 0.85rem;">
+      <option value="daily">once a day</option>
+      <option value="weekly">once a week</option>
+      <option value="interval">every N hours</option>
+    </select>
+    <span id="sched-time-wrap"><input type="time" id="sched-time" value="02:00" style="background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.3rem; font-size: 0.85rem;"></span>
+    <select id="sched-weekday" hidden style="background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.35rem; font-size: 0.85rem;">
+      <option value="0">Monday</option><option value="1">Tuesday</option>
+      <option value="2">Wednesday</option><option value="3">Thursday</option>
+      <option value="4">Friday</option><option value="5">Saturday</option>
+      <option value="6">Sunday</option>
+    </select>
+    <span id="sched-interval-wrap" hidden><input type="number" id="sched-interval" value="24" min="0.25" max="744" step="0.25" style="width: 4.5rem; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.3rem; font-size: 0.85rem;"> <span class="meta">hours</span></span>
+    <label style="font-size: 0.85rem;" title="Run read-only validation checks on new findings during scheduled scans"><input type="checkbox" id="sched-autoval" checked> auto-validate</label>
+    <button id="sched-save" style="padding: 0.4rem 0.9rem; border: 1px solid #30363d; border-radius: 6px; background: #238636; color: #fff; cursor: pointer; font-size: 0.85rem;">Save schedule</button>
+    <button id="sched-run" style="padding: 0.4rem 0.9rem; border: 1px solid #30363d; border-radius: 6px; background: #1f6feb; color: #fff; cursor: pointer; font-size: 0.85rem;">▶ Run scan now</button>
+  </div>
+  <div class="meta" id="sched-status" style="margin: 0.5rem 0 0;">loading schedule…</div>
+</div>
 <div id="error"></div>
 <table id="findings" hidden>
   <thead>
@@ -62,6 +85,7 @@
 <script>
 async function load() {
   loadTrends();
+  loadSchedule();
   try {
     const res = await fetch('/findings');
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -217,6 +241,92 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+const WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+function schedStatusLine(s) {
+  const cfg = s.config;
+  let when;
+  if (!cfg.enabled) when = 'disabled';
+  else if (cfg.cadence === 'daily') when = 'daily at ' + cfg.time;
+  else if (cfg.cadence === 'weekly') when = 'weekly on ' + WEEKDAYS[cfg.weekday] + ' at ' + cfg.time;
+  else when = 'every ' + cfg.interval_hours + 'h';
+  let line = 'Schedule: ' + when;
+  if (s.next_run && cfg.enabled) line += ' · next run ' + s.next_run.replace('T', ' ').slice(0, 16);
+  if (s.last_run) line += ' · last run ' + s.last_run.replace('T', ' ').slice(0, 16);
+  if (s.last_result && s.last_result.retest)
+    line += ' · last scan: ' + s.last_result.retest.results + ' finding(s) retested';
+  return line;
+}
+async function loadSchedule() {
+  const out = document.getElementById('sched-status');
+  try {
+    const res = await fetch('/schedule');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const s = await res.json();
+    const cfg = s.config;
+    document.getElementById('sched-enabled').checked = !!cfg.enabled;
+    document.getElementById('sched-cadence').value = cfg.cadence;
+    document.getElementById('sched-time').value = cfg.time;
+    document.getElementById('sched-weekday').value = String(cfg.weekday);
+    document.getElementById('sched-interval').value = cfg.interval_hours;
+    document.getElementById('sched-autoval').checked = !!cfg.auto_validate;
+    updateSchedVisibility();
+    out.textContent = schedStatusLine(s);
+  } catch (err) {
+    out.textContent = 'Could not load schedule: ' + err.message;
+  }
+}
+function updateSchedVisibility() {
+  const cadence = document.getElementById('sched-cadence').value;
+  document.getElementById('sched-time-wrap').hidden = (cadence === 'interval');
+  document.getElementById('sched-weekday').hidden = (cadence !== 'weekly');
+  document.getElementById('sched-interval-wrap').hidden = (cadence !== 'interval');
+}
+document.getElementById('sched-cadence').addEventListener('change', updateSchedVisibility);
+document.getElementById('sched-save').addEventListener('click', async () => {
+  const out = document.getElementById('sched-status');
+  const btn = document.getElementById('sched-save');
+  btn.disabled = true;
+  out.textContent = 'Saving…';
+  const body = {
+    enabled: document.getElementById('sched-enabled').checked,
+    cadence: document.getElementById('sched-cadence').value,
+    time: document.getElementById('sched-time').value || '02:00',
+    weekday: parseInt(document.getElementById('sched-weekday').value, 10),
+    interval_hours: parseFloat(document.getElementById('sched-interval').value),
+    auto_validate: document.getElementById('sched-autoval').checked,
+    scope_path: '',
+    ports: null,
+  };
+  try {
+    const res = await fetch('/schedule',
+      {method: 'PUT', headers: {'Content-Type': 'application/json'},
+       body: JSON.stringify(body)});
+    const s = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error('HTTP ' + res.status + (s.detail ? ': ' + s.detail : ''));
+    out.textContent = 'Saved. ' + schedStatusLine(s);
+  } catch (err) {
+    out.textContent = 'Save failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+document.getElementById('sched-run').addEventListener('click', async () => {
+  const out = document.getElementById('sched-status');
+  const btn = document.getElementById('sched-run');
+  btn.disabled = true;
+  out.textContent = 'Scan started in background — refresh in a bit to see results…';
+  try {
+    const res = await fetch('/schedule/run', {method: 'POST'});
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error('HTTP ' + res.status + (err.detail ? ': ' + err.detail : ''));
+    }
+  } catch (err) {
+    out.textContent = 'Run failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 load();
 </script>
 </body>

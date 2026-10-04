@@ -46,15 +46,45 @@ curl http://127.0.0.1:8000/findings
 | `lifecycle.py` | Finding lifecycle state machine (V0.4) |
 | `retest/` | Re-probing findings against current target state (V0.4) |
 | `trends.py` | Snapshot-based trend series + summary (V0.4) |
+| `scheduler/` | Automatic scheduled scans: config, next-run math, scan engine, background thread |
 | `common/` | Rotating file logging + local crash-report hook |
 | `config/` | `authorized_targets.yaml` — the safety boundary |
-| `scripts/` | `run_dev.sh` — launch the API; `simulate_e2e.py` — full pipeline simulation |
-| `tests/` | pytest suite (scope, data model, discovery, API) |
+| `scripts/` | `run_dev.sh` — launch the API; `simulate_e2e.py` — full pipeline simulation; `simulate_schedule.py` — scheduled-scan simulation |
+| `tests/` | pytest suite (scope, data model, discovery, API, scheduler) |
 | `docs/` | architecture, privacy, data model |
 | `logs/` | Rotating logs + local crash reports (gitignored, never committed) |
 
-## Safety & authorization
+## Scheduled scans
 
+Deadbolt can scan automatically on a schedule you define — once a day
+(e.g. 02:00), once a week (e.g. Monday 02:00), or every N hours. Each
+scheduled run executes the standard pipeline: discovery → optional
+read-only validation of new findings → retest of open findings → trend
+snapshot. Nothing is ever patched or changed on targets; scans are
+read-only, same as manual runs.
+
+Configure it from the dashboard's **⏰ Scheduled scans** panel, or via
+the API:
+
+```bash
+# run every day at 02:00 local time, validate new findings automatically
+curl -X PUT http://127.0.0.1:8000/schedule \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled": true, "cadence": "daily", "time": "02:00",
+       "auto_validate": true}'
+
+# check status: config, last run, next run, last result
+curl http://127.0.0.1:8000/schedule
+
+# trigger a scan right now (runs in the background)
+curl -X POST http://127.0.0.1:8000/schedule/run
+```
+
+The schedule is stored in the local database (`settings` table), so it
+survives restarts. The API starts a background thread on boot that runs
+due scans; every change and every run is audit-logged.
+
+## Safety & authorization
 **Read this before adding targets.** The agent refuses to run unless
 `config/authorized_targets.yaml` exists and explicitly lists targets with
 `authorized: true`. Public IPs and `0.0.0.0/0` additionally require

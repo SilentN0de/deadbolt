@@ -5,6 +5,22 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- Scheduled scans (`scheduler/`): Deadbolt can now scan automatically on
+  a user-defined schedule — once a day, once a week, or every N hours
+  (times are local to the machine running the API). Each scheduled run
+  executes the standard pipeline (discovery → optional read-only
+  validation of new findings → retest of open findings → trend
+  snapshot), exactly like a manual run. New endpoints: `GET /schedule`
+  (config + last/next run), `PUT /schedule` (replace config; 400 on
+  invalid), `POST /schedule/run` (trigger now; 202 background by
+  default, `?sync=true` waits). A background thread started by the API
+  checks every minute and runs due scans; every config change and run
+  is audit-logged. The dashboard has a "Scheduled scans" panel to
+  enable/configure the schedule and trigger scans. 36 new tests;
+  `scripts/simulate_schedule.py` exercises the whole flow against the
+  simulated lab.
+
 ### Changed
 - Rename project to Deadbolt (was "security-platform"). Logger namespace,
   Splunk `sourcetype`/`source` identifiers (`deadbolt:finding`), spool
