@@ -31,7 +31,7 @@ def main() -> int:
     failures = []
 
     with SimulatedLab() as lab, tempfile.TemporaryDirectory(
-        prefix="secplatform-e2e-"
+        prefix="deadbolt-e2e-"
     ) as tmp:
         scope_path = os.path.join(tmp, "scope.yaml")
         db_path = os.path.join(tmp, "e2e.db")

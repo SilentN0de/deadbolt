@@ -33,7 +33,7 @@ from validator.checks import TLS_PORTS
 from validator.runner import (_derive_outcome, _enforce_scope, _host_port,
                               _run_checks)
 
-log = logging.getLogger("secplatform.retest")
+log = logging.getLogger("deadbolt.retest")
 
 DEFAULT_SCOPE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "config", "authorized_targets.yaml")

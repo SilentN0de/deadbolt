@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from storage.db import Store
 
-log = logging.getLogger("secplatform.trends")
+log = logging.getLogger("deadbolt.trends")
 
 OPEN_STATUSES = ("suspected", "confirmed")
 

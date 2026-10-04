@@ -29,7 +29,7 @@ from storage.models import AuditEntry, Evidence, Finding, FindingEvent, Validati
 from .checks import (CheckResult, banner_intel, tcp_reprobe, tls_certificate,
                      TLS_PORTS)
 
-log = logging.getLogger("secplatform.validator")
+log = logging.getLogger("deadbolt.validator")
 
 _OPEN_PORT_RE = re.compile(r"Open port (\d+)/tcp")
 DEFAULT_SCOPE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

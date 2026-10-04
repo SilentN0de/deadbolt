@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-log = logging.getLogger("secplatform.validator")
+log = logging.getLogger("deadbolt.validator")
 
 CONNECT_TIMEOUT = 3.0
 BANNER_TIMEOUT = 2.0

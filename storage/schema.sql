@@ -1,5 +1,5 @@
 -- ============================================================================
--- Local-First Security Assessment Platform — SQLite schema (V0.1)
+-- Deadbolt — SQLite schema (V0.1)
 -- ============================================================================
 -- All data stays local. Assessment rows never leave this machine unless the
 -- user explicitly exports them.

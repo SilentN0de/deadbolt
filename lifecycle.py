@@ -14,7 +14,7 @@ from common.logging_setup import utc_now_iso
 from storage.db import Store
 from storage.models import STATUSES, FindingEvent
 
-log = logging.getLogger("secplatform.lifecycle")
+log = logging.getLogger("deadbolt.lifecycle")
 
 # The full state machine. Retest-driven edges (confirmed/suspected -> fixed,
 # fixed -> confirmed regression) go through the same machine with

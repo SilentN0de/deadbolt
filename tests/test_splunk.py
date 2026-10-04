@@ -21,8 +21,8 @@ def _finding(**kw):
 
 def test_finding_to_event_fields():
     ev = splunk_mod.finding_to_event(_finding())
-    assert ev["sourcetype"] == "secplatform:finding"
-    assert ev["source"] == "security-platform"
+    assert ev["sourcetype"] == "deadbolt:finding"
+    assert ev["source"] == "deadbolt"
     inner = ev["event"]
     assert inner["dest"] == "10.0.0.12"
     assert inner["dest_port"] == 445

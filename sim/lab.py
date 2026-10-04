@@ -25,7 +25,7 @@ import tempfile
 import threading
 from typing import Callable, Dict, Optional
 
-log = logging.getLogger("secplatform.sim")
+log = logging.getLogger("deadbolt.sim")
 
 Handler = Callable[[socket.socket], None]
 
@@ -126,7 +126,7 @@ class SimulatedLab:
         self.ports: Dict[str, Optional[int]] = {}
 
     def __enter__(self) -> "SimulatedLab":
-        self._workdir = tempfile.TemporaryDirectory(prefix="secplatform-sim-")
+        self._workdir = tempfile.TemporaryDirectory(prefix="deadbolt-sim-")
         self._add("ssh_old", _greet(b"SSH-2.0-OpenSSH_7.2p2 Debian-4ubuntu2.8\r\n"))
         self._add("http_old", _greet(
             b"HTTP/1.0 200 OK\r\nServer: nginx/1.14.0\r\n"
