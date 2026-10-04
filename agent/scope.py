@@ -21,7 +21,7 @@ from typing import List
 
 import yaml
 
-log = logging.getLogger("secplatform.scope")
+log = logging.getLogger("deadbolt.scope")
 
 
 class ScopeError(Exception):

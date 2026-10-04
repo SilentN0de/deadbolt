@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Authorized assessment targets — Local-First Security Assessment Platform
+# Authorized assessment targets — Deadbolt
 # ---------------------------------------------------------------------------
 # SAFETY: the agent REFUSES to run unless this file exists and explicitly
 # lists at least one target. Every target entry must set `authorized: true`.

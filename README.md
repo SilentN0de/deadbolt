@@ -1,4 +1,4 @@
-# Local-First Security Assessment Platform
+# Deadbolt
 
 > **Your security data belongs to you. Local by default.**
 

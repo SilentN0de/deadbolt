@@ -37,7 +37,7 @@ DB_PATH = os.environ.get("SECURITY_PLATFORM_DB", DEFAULT_DB)
 configure_logging()
 install_crash_hook()
 
-app = FastAPI(title="Local Security Assessment Platform", version=VERSION)
+app = FastAPI(title="Deadbolt", version=VERSION)
 
 
 def _store() -> Store:

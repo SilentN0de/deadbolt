@@ -5,7 +5,7 @@ Two ingest paths, both local-first and operator-triggered:
 1. Spool file (default, no Splunk credentials needed):
    findings are appended as JSON Lines to data/splunk_spool/. Point a
    Splunk Universal Forwarder at that directory with sourcetype
-   "secplatform:finding" and Splunk ingests them on its own schedule.
+   "deadbolt:finding" and Splunk ingests them on its own schedule.
 
 2. HEC (HTTP Event Collector):
    POSTs events straight to your Splunk HEC endpoint. Requires
@@ -23,8 +23,8 @@ from typing import Any, Dict, List, Optional
 
 from validator.runner import _host_port
 
-SOURCETYPE = "secplatform:finding"
-SOURCE = "security-platform"
+SOURCETYPE = "deadbolt:finding"
+SOURCE = "deadbolt"
 
 SPOOL_DIR = os.environ.get(
     "SECURITY_PLATFORM_SPLUNK_SPOOL",
@@ -62,7 +62,7 @@ def finding_to_event(finding) -> Dict[str, Any]:
         "last_seen": finding.last_seen,
         "remediation": finding.remediation,
         "evidence_count": len(finding.evidence or []),
-        "vendor_product": "security-platform",
+        "vendor_product": "deadbolt",
     }
     if port is not None:
         inner["dest_port"] = port
@@ -80,7 +80,7 @@ def write_spool(events: List[Dict[str, Any]],
     spool_dir = spool_dir or SPOOL_DIR
     os.makedirs(spool_dir, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    path = os.path.join(spool_dir, f"secplatform-{stamp}.log")
+    path = os.path.join(spool_dir, f"deadbolt-{stamp}.log")
     with open(path, "a", encoding="utf-8") as fh:
         for ev in events:
             fh.write(json.dumps(ev, default=str) + "\n")

@@ -1,7 +1,7 @@
 # Splunk Integration
 
 The platform exports findings as Splunk-ready events — CIM-friendly field
-names (`dest`, `dest_port`, `severity`), `sourcetype` `secplatform:finding`,
+names (`dest`, `dest_port`, `severity`), `sourcetype` `deadbolt:finding`,
 one JSON object per line. Two ingest paths; both are operator-triggered
 and audit-logged, and neither changes what the platform scans.
 
@@ -11,15 +11,15 @@ and audit-logged, and neither changes what the platform scans.
 matching findings as JSON Lines to:
 
 ```
-data/splunk_spool/secplatform-<timestamp>.log
+data/splunk_spool/deadbolt-<timestamp>.log
 ```
 
 Point a Splunk Universal Forwarder at that directory:
 
 ```ini
 # /opt/splunkforwarder/etc/system/local/inputs.conf
-[monitor:///path/to/security-platform/data/splunk_spool]
-sourcetype = secplatform:finding
+[monitor:///path/to/deadbolt/data/splunk_spool]
+sourcetype = deadbolt:finding
 index = security
 ```
 
@@ -37,7 +37,7 @@ never in the repo or the config file:
 export SPLUNK_HEC_URL="https://your-splunk:8088"
 export SPLUNK_HEC_TOKEN="<hec-token>"
 export SPLUNK_HEC_INDEX="security"        # optional
-export SPLUNK_HEC_SOURCETYPE="secplatform:finding"  # optional override
+export SPLUNK_HEC_SOURCETYPE="deadbolt:finding"  # optional override
 ```
 
 To create the token in Splunk: **Settings → Data Inputs → HTTP Event
@@ -68,8 +68,8 @@ Each event is a HEC envelope:
 ```json
 {
   "time": 1759252860.0,
-  "source": "security-platform",
-  "sourcetype": "secplatform:finding",
+  "source": "deadbolt",
+  "sourcetype": "deadbolt:finding",
   "event": {
     "finding_id": "…",
     "dest": "10.0.0.12",
@@ -82,7 +82,7 @@ Each event is a HEC envelope:
     "last_seen": "…",
     "remediation": "…",
     "evidence_count": 2,
-    "vendor_product": "security-platform"
+    "vendor_product": "deadbolt"
   }
 }
 ```

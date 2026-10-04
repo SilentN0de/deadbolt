@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Changed
+- Rename project to Deadbolt (was "security-platform"). Logger namespace,
+  Splunk `sourcetype`/`source` identifiers (`deadbolt:finding`), spool
+  filenames, API/dashboard titles, and docs all use the new name.
+
 ## [0.4.0] — 2026-10-03
 
 ### Added

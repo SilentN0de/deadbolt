@@ -31,7 +31,7 @@ from storage.models import AuditEntry, Evidence, Finding, Run
 
 from .scope import ScopeError, load_scope
 
-log = logging.getLogger("secplatform.discovery")
+log = logging.getLogger("deadbolt.discovery")
 
 COLLECTOR = "discovery.tcp"
 

@@ -33,7 +33,7 @@ def configure_logging(level: int = logging.INFO) -> logging.Logger:
     os.makedirs(LOG_DIR, exist_ok=True)
     os.makedirs(CRASH_DIR, exist_ok=True)
 
-    logger = logging.getLogger("secplatform")
+    logger = logging.getLogger("deadbolt")
     if _configured:
         return logger
     logger.setLevel(level)
@@ -85,7 +85,7 @@ def install_crash_hook() -> None:
     def _excepthook(exc_type, exc_value, exc_tb):
         try:
             path = _write_crash_report(exc_type, exc_value, exc_tb)
-            logging.getLogger("secplatform").critical(
+            logging.getLogger("deadbolt").critical(
                 "Uncaught exception; local crash report written to %s", path
             )
         finally:
