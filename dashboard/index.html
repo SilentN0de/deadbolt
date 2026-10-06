@@ -39,8 +39,8 @@
 </style>
 </head>
 <body>
-<h1>🔒 Deadbolt <span class="sub">v0.4</span></h1>
-<div class="sub">Local-first findings. Nothing leaves this machine.</div>
+<h1>🔒 Deadbolt <span class="sub">v0.5</span></h1>
+<div class="sub">Local-first findings. Nothing leaves this machine — unless you opt into outside-in assessment below.</div>
 <div id="trends" style="display: flex; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap;"></div>
 <div class="meta" id="meta">loading…</div>
 <div id="exportbar" style="margin-bottom: 1rem;">
@@ -74,6 +74,43 @@
   </div>
   <div class="meta" id="sched-status" style="margin: 0.5rem 0 0;">loading schedule…</div>
 </div>
+<div id="extbar" style="margin-bottom: 1.25rem; padding: 0.9rem 1rem; border: 1px solid #30363d; border-radius: 8px; background: #161b22; max-width: 70rem;">
+  <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+    <strong style="font-size: 0.95rem;">🌐 Outside-in (external assessment)</strong>
+    <label style="font-size: 0.85rem;" title="Opt-in: allow workers outside this network to probe authorized targets"><input type="checkbox" id="ext-enabled"> enabled</label>
+    <button id="ext-save" style="padding: 0.4rem 0.9rem; border: 1px solid #30363d; border-radius: 6px; background: #238636; color: #fff; cursor: pointer; font-size: 0.85rem;">Save</button>
+    <span class="meta" id="ext-status" style="margin: 0;">loading…</span>
+  </div>
+  <div id="ext-disclosure" class="meta" style="margin: 0.6rem 0; padding: 0.6rem 0.8rem; border: 1px dashed #8b949e; border-radius: 6px;"></div>
+  <div style="display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
+    <div style="flex: 1 1 20rem; min-width: 18rem;">
+      <strong style="font-size: 0.85rem;">Workers</strong>
+      <div style="margin: 0.4rem 0; display: flex; gap: 0.5rem;">
+        <input id="ext-worker-name" placeholder="worker name (e.g. pi-at-moms)" style="flex: 1; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.35rem; font-size: 0.85rem;">
+        <button id="ext-worker-add" style="padding: 0.4rem 0.9rem; border: 1px solid #30363d; border-radius: 6px; background: #1f6feb; color: #fff; cursor: pointer; font-size: 0.85rem;">Register</button>
+      </div>
+      <div id="ext-token-box" class="meta" hidden style="padding: 0.6rem; border: 1px solid #ffa657; border-radius: 6px; margin-bottom: 0.5rem;"></div>
+      <table id="ext-workers" style="font-size: 0.82rem;">
+        <thead><tr><th>Name</th><th>Last seen</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div style="flex: 1 1 20rem; min-width: 18rem;">
+      <strong style="font-size: 0.85rem;">Queue an assessment</strong>
+      <div style="margin: 0.4rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <select id="ext-assess-worker" style="background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.35rem; font-size: 0.85rem;"></select>
+        <input id="ext-assess-targets" placeholder="targets, comma-separated" style="flex: 1; min-width: 10rem; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.35rem; font-size: 0.85rem;">
+      </div>
+      <div id="ext-probes" class="meta" style="margin: 0.25rem 0;"></div>
+      <button id="ext-assess-go" style="padding: 0.4rem 0.9rem; border: 1px solid #30363d; border-radius: 6px; background: #238636; color: #fff; cursor: pointer; font-size: 0.85rem;">Enqueue assessment</button>
+      <span class="meta" id="ext-assess-status" style="margin-left: 0.5rem;"></span>
+      <table id="ext-queue" style="font-size: 0.82rem; margin-top: 0.5rem;">
+        <thead><tr><th>Worker</th><th>Targets</th><th>Probes</th><th>Status</th><th>Findings</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
 <div id="error"></div>
 <table id="findings" hidden>
   <thead>
@@ -83,9 +120,149 @@
 </table>
 <div id="detail" hidden></div>
 <script>
+async function loadExternal() {
+  const statusOut = document.getElementById('ext-status');
+  try {
+    const res = await fetch('/external/status');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const s = await res.json();
+    document.getElementById('ext-enabled').checked = !!s.enabled;
+    document.getElementById('ext-disclosure').textContent =
+      'Disclosure: ' + s.disclosure;
+    const probes = document.getElementById('ext-probes');
+    probes.innerHTML = s.probes.map(p =>
+      '<label style="margin-right: 0.6rem;"><input type="checkbox" class="ext-probe" value="' +
+      escapeHtml(p) + '" checked> ' + escapeHtml(p) + '</label>').join('');
+    statusOut.textContent = s.enabled
+      ? 'Outside-in assessment is ON — workers may probe authorized targets.'
+      : 'Outside-in assessment is OFF (default). Nothing leaves this machine.';
+    loadExternalWorkers();
+    loadExternalQueue();
+  } catch (err) {
+    statusOut.textContent = 'Could not load external status: ' + err.message;
+  }
+}
+document.getElementById('ext-save').addEventListener('click', async () => {
+  const out = document.getElementById('ext-status');
+  const btn = document.getElementById('ext-save');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/external/status',
+      {method: 'PUT', headers: {'Content-Type': 'application/json'},
+       body: JSON.stringify({enabled: document.getElementById('ext-enabled').checked})});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    loadExternal();
+  } catch (err) {
+    out.textContent = 'Save failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+async function loadExternalWorkers() {
+  const tbody = document.querySelector('#ext-workers tbody');
+  const sel = document.getElementById('ext-assess-worker');
+  try {
+    const res = await fetch('/external-workers');
+    if (!res.ok) return;
+    const workers = await res.json();
+    tbody.innerHTML = '';
+    sel.innerHTML = '';
+    for (const w of workers) {
+      const tr = document.createElement('tr');
+      const revoked = w.revoked
+        ? '<span class="status">revoked</span>'
+        : '<button data-revoke="' + escapeHtml(w.id) + '" style="padding: 0.25rem 0.6rem; border: 1px solid #30363d; border-radius: 6px; background: #da3633; color: #fff; cursor: pointer; font-size: 0.78rem;">Revoke</button>';
+      tr.innerHTML = '<td>' + escapeHtml(w.name) + '</td>' +
+        '<td class="meta">' + (w.last_seen ? w.last_seen.slice(0, 16).replace('T', ' ') : 'never') + '</td>' +
+        '<td>' + revoked + '</td>';
+      tbody.appendChild(tr);
+      if (!w.revoked) {
+        const opt = document.createElement('option');
+        opt.value = w.id;
+        opt.textContent = w.name;
+        sel.appendChild(opt);
+      }
+    }
+    tbody.querySelectorAll('[data-revoke]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Revoke this worker? Its token dies immediately.')) return;
+        await fetch('/external-workers/' + encodeURIComponent(btn.dataset.revoke),
+          {method: 'DELETE'});
+        loadExternalWorkers();
+      });
+    });
+  } catch (err) { /* best-effort */ }
+}
+document.getElementById('ext-worker-add').addEventListener('click', async () => {
+  const name = document.getElementById('ext-worker-name').value.trim();
+  const box = document.getElementById('ext-token-box');
+  if (!name) { box.hidden = false; box.textContent = 'Give the worker a name first.'; return; }
+  try {
+    const res = await fetch('/external-workers',
+      {method: 'POST', headers: {'Content-Type': 'application/json'},
+       body: JSON.stringify({name})});
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error('HTTP ' + res.status + (body.detail ? ': ' + body.detail : ''));
+    box.hidden = false;
+    box.innerHTML = '<strong style="color: #ffa657;">Worker token — shown ONCE. Copy it now:</strong><br>' +
+      '<code style="word-break: break-all;">' + escapeHtml(body.token) + '</code>';
+    document.getElementById('ext-worker-name').value = '';
+    loadExternalWorkers();
+  } catch (err) {
+    box.hidden = false;
+    box.textContent = 'Registration failed: ' + err.message;
+  }
+});
+async function loadExternalQueue() {
+  const tbody = document.querySelector('#ext-queue tbody');
+  try {
+    const [qres, wres] = await Promise.all([
+      fetch('/external-assessments'), fetch('/external-workers')]);
+    if (!qres.ok) return;
+    const queue = await qres.json();
+    const names = {};
+    if (wres.ok) for (const w of await wres.json()) names[w.id] = w.name;
+    tbody.innerHTML = '';
+    for (const a of queue.slice(0, 20)) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + escapeHtml(names[a.worker_id] || a.worker_id.slice(0, 8)) + '</td>' +
+        '<td><code>' + escapeHtml((a.targets || []).join(', ')) + '</code></td>' +
+        '<td class="meta">' + escapeHtml((a.probes || []).join(', ')) + '</td>' +
+        '<td><span class="status">' + escapeHtml(a.status) + '</span></td>' +
+        '<td>' + (a.summary && a.summary.findings_created != null ? a.summary.findings_created : '—') + '</td>';
+      tbody.appendChild(tr);
+    }
+  } catch (err) { /* best-effort */ }
+}
+document.getElementById('ext-assess-go').addEventListener('click', async () => {
+  const out = document.getElementById('ext-assess-status');
+  const btn = document.getElementById('ext-assess-go');
+  const worker_id = document.getElementById('ext-assess-worker').value;
+  const targets = document.getElementById('ext-assess-targets').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const probes = Array.from(document.querySelectorAll('.ext-probe:checked'))
+    .map(c => c.value);
+  btn.disabled = true;
+  out.textContent = 'Enqueuing…';
+  try {
+    const res = await fetch('/external-assessments',
+      {method: 'POST', headers: {'Content-Type': 'application/json'},
+       body: JSON.stringify({worker_id, targets, probes})});
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error('HTTP ' + res.status + (body.detail ? ': ' + body.detail : ''));
+    out.textContent = 'Enqueued.';
+    document.getElementById('ext-assess-targets').value = '';
+    loadExternalQueue();
+  } catch (err) {
+    out.textContent = 'Enqueue failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 async function load() {
   loadTrends();
   loadSchedule();
+  loadExternal();
   try {
     const res = await fetch('/findings');
     if (!res.ok) throw new Error('HTTP ' + res.status);

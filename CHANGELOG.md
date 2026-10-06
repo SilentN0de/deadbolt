@@ -3,9 +3,47 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.5.0] — 2026-10-05
 
 ### Added
+- External assessment (`external/`): verified outside-in worker. A small
+  worker program (`python -m external.worker`, stdlib only — runs anywhere
+  with Python 3: second Pi, cheap VPS, or a friend's box over Tailscale)
+  probes explicitly authorized targets from outside the assessed network
+  and pushes results back to the Deadbolt API, which stores them as
+  ordinary findings with full evidence through the existing lifecycle
+  machine (`suspected` → …, `finding_events` note with actor `system`).
+  Read-only probes only: outside-in port discovery, banner intel, TLS
+  certificate inspection, DNS exposure (MX/TXT/SPF via a minimal
+  DNS-over-UDP client), HTTP security headers.
+- Worker registry + token auth: `POST /external-workers` registers a
+  worker and returns a long random token ONCE (stored as a sha256 hash,
+  never plaintext); `GET /external-workers` lists workers (no token
+  material exposed); `DELETE /external-workers/{id}` revokes — the token
+  dies immediately. Worker endpoints (`GET /external-assessments` poll,
+  `POST /external-assessments/{id}/start`, `POST /external-results`
+  ingest) use `Authorization: Bearer` token auth.
+- Assessment queue: `POST /external-assessments` (targets + probe set +
+  optional port override; 400 on out-of-scope targets — IPs must resolve
+  inside the authorized scope file, domains must be listed under the
+  scope file's `external_domains` allowlist — 400 on unknown probes,
+  429 on per-worker enqueue cooldown), `GET /external-assessments`
+  (operator: full queue; worker token: only its own pending work),
+  `GET /external-assessments/{id}`.
+- Safety posture (mirrors validation/retest): off by default via the
+  `external.enabled` kill switch (`GET`/`PUT /external/status`;
+  enqueue, worker poll, and ingest all 403 while disabled); scope guard
+  with audit-logged denies; per-worker enqueue cooldown; worker only
+  probes targets from its assigned assessments; every step audit-logged.
+  Clean hook for the scheduled-scans engine: `enqueue_assessment()`
+  takes a Store directly.
+- Dashboard "🌐 Outside-in" panel: disclosure banner (exactly what leaves
+  the device), opt-in enable switch (off by default), worker list with
+  one-click revoke, worker registration (token shown once), assessment
+  queue with enqueue form. 38 new tests;
+  `scripts/simulate_external.py` exercises the whole flow (kill switch,
+  opt-in, registration, scope guard, worker run, ingest, revoke,
+  dashboard) against the simulated lab — 27/27 checks green.
 - Scheduled scans (`scheduler/`): Deadbolt can now scan automatically on
   a user-defined schedule — once a day, once a week, or every N hours
   (times are local to the machine running the API). Each scheduled run

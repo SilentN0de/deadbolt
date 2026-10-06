@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -23,6 +23,12 @@ from analyst import explain_finding
 from common.logging_setup import (configure_logging, install_crash_hook,
                                   utc_now_iso)
 from exporters import splunk as splunk_exporter
+from external import ALL_PROBES as EXTERNAL_PROBES
+from external.server import (ExternalError, authenticate_worker,
+                             enqueue_assessment, ingest_results,
+                             is_enabled as external_is_enabled,
+                             register_worker, revoke_worker,
+                             set_enabled as external_set_enabled)
 from lifecycle import IllegalTransition, transition_finding
 from retest import RetestError, retest_all, retest_finding
 from scheduler import (ScheduleConfig, ScheduleError, compute_next_run,
@@ -34,7 +40,7 @@ from storage.models import STATUSES, AuditEntry
 from trends import get_summary, get_trends
 from validator import ALL_CHECKS, ValidationError, validate_finding
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "findings.db")
 DEFAULT_SCOPE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -500,6 +506,225 @@ def run_schedule_now(sync: bool = Query(False)):
         name="deadbolt-manual-scan", daemon=True)
     thread.start()
     return JSONResponse({"status": "started"}, status_code=202)
+
+
+class WorkerRegisterRequest(BaseModel):
+    name: str
+
+
+class ExternalStatusRequest(BaseModel):
+    enabled: bool
+
+
+class AssessmentEnqueueRequest(BaseModel):
+    worker_id: str
+    targets: List[str]
+    probes: List[str]
+    ports: Optional[List[int]] = None  # override probe default port list
+    scope: Optional[str] = None  # path to authorized_targets.yaml
+
+
+class ResultsIngestRequest(BaseModel):
+    assessment_id: str
+    results: List[Dict[str, Any]]
+
+
+def _bearer_token(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def _external_error(exc: ExternalError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=exc.detail)
+
+
+@app.get("/external/status")
+def external_status():
+    """Kill-switch state + disclosure for the dashboard opt-in panel."""
+    store = _store()
+    try:
+        return {
+            "enabled": external_is_enabled(store),
+            "probes": list(EXTERNAL_PROBES),
+            "disclosure": (
+                "When enabled, the operator's target list and probe set are "
+                "sent to a registered worker running outside this network; "
+                "the worker's results come back as evidence. Raw scan data "
+                "never goes anywhere except this API. Off by default; "
+                "revoking a worker kills its token immediately."
+            ),
+        }
+    finally:
+        store.close()
+
+
+@app.put("/external/status")
+def external_set_status(req: ExternalStatusRequest):
+    """Operator opt-in / kill switch. Audit-logged."""
+    store = _store()
+    try:
+        enabled = external_set_enabled(store, req.enabled, actor="operator")
+        return {"enabled": enabled}
+    finally:
+        store.close()
+
+
+@app.post("/external-workers", status_code=201)
+def external_register_worker(req: WorkerRegisterRequest):
+    """Register a worker (operator). Returns the token ONCE — it is stored
+    as a hash and never shown again."""
+    store = _store()
+    try:
+        try:
+            return register_worker(store, req.name)
+        except ExternalError as exc:
+            raise _external_error(exc)
+    finally:
+        store.close()
+
+
+@app.get("/external-workers")
+def external_list_workers():
+    """List workers (operator). Token hashes are never exposed."""
+    store = _store()
+    try:
+        return store.list_workers()
+    finally:
+        store.close()
+
+
+@app.delete("/external-workers/{worker_id}")
+def external_revoke_worker(worker_id: str):
+    """Revoke a worker (operator). Its token dies immediately."""
+    store = _store()
+    try:
+        try:
+            return revoke_worker(store, worker_id)
+        except ExternalError as exc:
+            raise _external_error(exc)
+    finally:
+        store.close()
+
+
+@app.post("/external-assessments", status_code=201)
+def external_enqueue(req: AssessmentEnqueueRequest):
+    """Queue an outside-in assessment (operator).
+
+    403 when the kill switch is off, 400 on out-of-scope targets or
+    unknown probes, 429 on per-worker enqueue cooldown.
+    """
+    store = _store()
+    try:
+        try:
+            return enqueue_assessment(
+                store, req.worker_id, req.targets, req.probes,
+                scope_path=req.scope or DEFAULT_SCOPE, ports=req.ports)
+        except ExternalError as exc:
+            raise _external_error(exc)
+    finally:
+        store.close()
+
+
+@app.get("/external-assessments")
+def external_list_assessments(authorization: Optional[str] = Header(None)):
+    """Queue listing.
+
+    With a valid worker Bearer token: only that worker's pending
+    (queued/running) assessments — this is how workers poll for work.
+    Without a token: the full queue (operator view).
+    """
+    store = _store()
+    try:
+        token = _bearer_token(authorization)
+        if token is not None:
+            try:
+                worker = authenticate_worker(store, token)
+            except ExternalError as exc:
+                raise _external_error(exc)
+            if not external_is_enabled(store):
+                raise HTTPException(
+                    status_code=403,
+                    detail="external assessments are disabled")
+            store.touch_worker(worker["id"])
+            out = []
+            for status in ("queued", "running"):
+                out.extend(store.list_assessments(worker_id=worker["id"],
+                                                  status=status))
+            return out
+        return store.list_assessments()
+    finally:
+        store.close()
+
+
+@app.get("/external-assessments/{assessment_id}")
+def external_get_assessment(assessment_id: str):
+    """One assessment (operator view)."""
+    store = _store()
+    try:
+        assessment = store.get_assessment(assessment_id)
+    finally:
+        store.close()
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="assessment not found")
+    return assessment
+
+
+@app.post("/external-assessments/{assessment_id}/start", status_code=200)
+def external_start_assessment(assessment_id: str,
+                              authorization: Optional[str] = Header(None)):
+    """Worker marks an assessment running (best-effort; 404 if unknown)."""
+    store = _store()
+    try:
+        token = _bearer_token(authorization)
+        try:
+            worker = authenticate_worker(store, token or "")
+        except ExternalError as exc:
+            raise _external_error(exc)
+        assessment = store.get_assessment(assessment_id)
+        if assessment is None:
+            raise HTTPException(status_code=404,
+                                detail="assessment not found")
+        if assessment["worker_id"] != worker["id"]:
+            raise HTTPException(status_code=403,
+                                detail="not assigned to this worker")
+        if assessment["status"] == "queued":
+            store.update_assessment(assessment_id, status="running",
+                                    started_at=utc_now_iso())
+        store.touch_worker(worker["id"])
+        return {"id": assessment_id,
+                "status": store.get_assessment(assessment_id)["status"]}
+    finally:
+        store.close()
+
+
+@app.post("/external-results", status_code=201)
+def external_ingest_results(req: ResultsIngestRequest,
+                            authorization: Optional[str] = Header(None)):
+    """Worker pushes probe results (token auth). Results become findings
+    with full evidence through the normal lifecycle path.
+
+    403 when the kill switch is off.
+    """
+    store = _store()
+    try:
+        token = _bearer_token(authorization)
+        try:
+            worker = authenticate_worker(store, token or "")
+        except ExternalError as exc:
+            raise _external_error(exc)
+        try:
+            result = ingest_results(store, worker, req.assessment_id,
+                                    req.results)
+        except ExternalError as exc:
+            raise _external_error(exc)
+        store.touch_worker(worker["id"])
+        return result
+    finally:
+        store.close()
 
 
 @app.get("/", include_in_schema=False)

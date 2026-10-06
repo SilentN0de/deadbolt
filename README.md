@@ -6,14 +6,10 @@ A privacy-first security assessment platform for systems you own or are
 explicitly authorized to test. The core loop: **Discover → Safely Validate →
 Explain → Remediate → Retest → Monitor.**
 
-**Current stage: V0.4 — discovery + analyst + controlled validation + fix & verify.** A Python agent discovers
-open TCP services on authorized targets, stores evidence-backed findings in a
-local SQLite database, a built-in analyst explains each finding in
-plain English, operator-triggered read-only validation checks confirm
-findings, retests verify fixes against current target state, an explicit
-lifecycle state machine tracks every status change, and trend snapshots
-power per-day time series — all served through a local API + dashboard.
-Nothing leaves the machine.
+**Current stage: V0.5 — everything above, plus verified outside-in assessment.** An optional worker
+program running outside the assessed network probes explicitly authorized targets (your own public IP,
+a VPS you control) with read-only probes and reports back; results land as ordinary findings with
+full evidence. Off by default — nothing leaves the machine until the operator opts in.
 
 ## Quickstart
 
@@ -47,9 +43,10 @@ curl http://127.0.0.1:8000/findings
 | `retest/` | Re-probing findings against current target state (V0.4) |
 | `trends.py` | Snapshot-based trend series + summary (V0.4) |
 | `scheduler/` | Automatic scheduled scans: config, next-run math, scan engine, background thread |
+| `external/` | Outside-in assessment (V0.5): worker client (`worker.py`), read-only probes (`probes.py`), registry + queue + ingest (`server.py`) |
 | `common/` | Rotating file logging + local crash-report hook |
 | `config/` | `authorized_targets.yaml` — the safety boundary |
-| `scripts/` | `run_dev.sh` — launch the API; `simulate_e2e.py` — full pipeline simulation; `simulate_schedule.py` — scheduled-scan simulation |
+| `scripts/` | `run_dev.sh` — launch the API; `simulate_e2e.py` — full pipeline simulation; `simulate_schedule.py` — scheduled-scan simulation; `simulate_external.py` — outside-in worker simulation |
 | `tests/` | pytest suite (scope, data model, discovery, API, scheduler) |
 | `docs/` | architecture, privacy, data model |
 | `logs/` | Rotating logs + local crash reports (gitignored, never committed) |
@@ -103,6 +100,34 @@ written to an immutable audit table.
 - **V0.2** ✅ AI analyst: local evidence-backed explanations + remediation
 - **V0.3** ✅ controlled validation: bounded, approved, audited confirmation
 - **V0.4** ✅ fix & verify: retesting, finding lifecycle, trend tracking
-- **V0.5** → external assessment: verified outside-in worker (next)
+- **V0.5** ✅ external assessment: verified outside-in worker (opt-in, off by default)
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
+
+## External assessment (outside-in)
+
+Deadbolt can also show what an attacker on the internet sees. A small worker program runs on a
+machine *outside* the assessed network and probes only explicitly authorized targets with
+read-only probes (port discovery, banner intel, TLS certificate inspection, DNS MX/TXT/SPF,
+HTTP security headers). Results come back to the local API as ordinary findings with full
+evidence. **Off by default**, per the privacy promise: enable it in the dashboard's
+🌐 Outside-in panel after reading the disclosure, or via the API.
+
+```bash
+# on the outside machine (any box with Python 3, stdlib only)
+python -m external.worker --api http://<deadbolt-host>:8000 register --name my-pi
+python -m external.worker --api http://<deadbolt-host>:8000 run-once
+
+# on the Deadbolt API host (operator)
+curl -X PUT http://127.0.0.1:8000/external/status \
+  -H 'Content-Type: application/json' -d '{"enabled": true}'
+curl -X POST http://127.0.0.1:8000/external-assessments \
+  -H 'Content-Type: application/json' \
+  -d '{"worker_id": "<id>", "targets": ["203.0.113.10"], "probes": ["port_discovery"]}'
+```
+
+Targets must be in the operator-approved scope: IPs resolve against `config/authorized_targets.yaml`,
+and DNS-probe domains must be listed under its `external_domains` allowlist. Workers authenticate
+with per-worker bearer tokens (stored as hashes, revoked in one click). Enqueue, polling, and
+result ingest are all gated by the kill switch and audit-logged. `scripts/simulate_external.py`
+exercises the whole flow against the simulated lab.
