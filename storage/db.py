@@ -42,6 +42,21 @@ class Store:
         with open(_SCHEMA_PATH, "r", encoding="utf-8") as fh:
             self._conn.executescript(fh.read())
         self._conn.commit()
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        """Column-level migrations for tables that already exist.
+
+        CREATE TABLE IF NOT EXISTS never adds a column to an existing
+        table, so new columns on shipped tables are added here.
+        """
+        existing = {r["name"] for r in self._conn.execute(
+            "PRAGMA table_info(external_assessments)").fetchall()}
+        if existing and "ports" not in existing:
+            self._conn.execute(
+                "ALTER TABLE external_assessments "
+                "ADD COLUMN ports TEXT NOT NULL DEFAULT '[]'")
+            self._conn.commit()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -436,6 +451,133 @@ class Store:
             "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- external workers + assessments (V0.5) --------------------------------
+    def create_worker(self, worker_id: str, name: str,
+                      token_hash: str) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                """INSERT INTO external_workers
+                   (id, name, token_hash, created_at, revoked)
+                   VALUES (?,?,?,?,0)""",
+                (worker_id, name, token_hash, utc_now_iso()),
+            )
+
+    def get_worker(self, worker_id: str) -> Optional[Dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT id, name, created_at, last_seen, revoked, revoked_at "
+            "FROM external_workers WHERE id = ?", (worker_id,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["revoked"] = bool(d["revoked"])
+        return d
+
+    def get_worker_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        # NOTE: token hashes never leave this method's caller as plaintext
+        # tokens; the API layer only ever sees the worker identity.
+        row = self._conn.execute(
+            "SELECT id, name, created_at, last_seen, revoked, revoked_at "
+            "FROM external_workers WHERE token_hash = ?",
+            (token_hash,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["revoked"] = bool(d["revoked"])
+        return d
+
+    def list_workers(self) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT id, name, created_at, last_seen, revoked, revoked_at "
+            "FROM external_workers ORDER BY created_at").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["revoked"] = bool(d["revoked"])
+            out.append(d)
+        return out
+
+    def revoke_worker(self, worker_id: str) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE external_workers SET revoked = 1, revoked_at = ? "
+                "WHERE id = ?", (utc_now_iso(), worker_id))
+
+    def touch_worker(self, worker_id: str) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE external_workers SET last_seen = ? WHERE id = ?",
+                (utc_now_iso(), worker_id))
+
+    def create_assessment(self, assessment_id: str, worker_id: str,
+                          targets: List[str], probes: List[str],
+                          ports: Optional[List[int]] = None) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                """INSERT INTO external_assessments
+                   (id, worker_id, targets, probes, ports, status, created_at)
+                   VALUES (?,?,?,?,?, 'queued', ?)""",
+                (assessment_id, worker_id, dumps(targets), dumps(probes),
+                 dumps(ports or []), utc_now_iso()),
+            )
+
+    def get_assessment(self, assessment_id: str) -> Optional[Dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT * FROM external_assessments WHERE id = ?",
+            (assessment_id,)).fetchone()
+        if row is None:
+            return None
+        return self._assessment_dict(row)
+
+    def list_assessments(self, worker_id: Optional[str] = None,
+                         status: Optional[str] = None,
+                         limit: int = 100) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM external_assessments"
+        clauses, params = [], []
+        if worker_id:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        return [self._assessment_dict(r)
+                for r in self._conn.execute(query, params)]
+
+    def update_assessment(self, assessment_id: str, status: str,
+                          started_at: Optional[str] = None,
+                          finished_at: Optional[str] = None,
+                          summary: Optional[Dict[str, Any]] = None) -> None:
+        if status not in ("queued", "running", "completed", "failed",
+                          "cancelled"):
+            raise ValueError(f"invalid assessment status: {status!r}")
+        with self._tx() as conn:
+            if summary is not None:
+                conn.execute(
+                    "UPDATE external_assessments SET status = ?, "
+                    "started_at = COALESCE(?, started_at), "
+                    "finished_at = COALESCE(?, finished_at), summary = ? "
+                    "WHERE id = ?",
+                    (status, started_at, finished_at, dumps(summary),
+                     assessment_id))
+            else:
+                conn.execute(
+                    "UPDATE external_assessments SET status = ?, "
+                    "started_at = COALESCE(?, started_at), "
+                    "finished_at = COALESCE(?, finished_at) WHERE id = ?",
+                    (status, started_at, finished_at, assessment_id))
+
+    @staticmethod
+    def _assessment_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        d = dict(row)
+        d["targets"] = loads(d["targets"])
+        d["probes"] = loads(d["probes"])
+        d["ports"] = loads(d["ports"]) if d.get("ports") else []
+        d["summary"] = loads(d["summary"]) if d["summary"] else {}
+        return d
 
 
 def sha256_file(path: str) -> str:

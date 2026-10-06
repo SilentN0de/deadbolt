@@ -171,3 +171,44 @@ CREATE TABLE IF NOT EXISTS settings (
     value       TEXT NOT NULL,   -- JSON
     updated_at  TEXT NOT NULL    -- ISO-8601 UTC
 );
+
+-- ----------------------------------------------------------------------------
+-- external_workers: registered outside-in workers (V0.5).
+-- The token itself is NEVER stored: only its sha256 hash (token_hash), and
+-- the plaintext token is returned once at registration. Revoke sets
+-- revoked=1; token checks fail immediately afterwards.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS external_workers (
+    id          TEXT PRIMARY KEY,          -- uuid4 hex
+    name        TEXT NOT NULL,             -- operator label, e.g. "pi-at-moms"
+    token_hash  TEXT NOT NULL UNIQUE,      -- sha256 hex of the worker token
+    created_at  TEXT NOT NULL,             -- ISO-8601 UTC
+    last_seen   TEXT,                      -- ISO-8601 UTC of last poll/ingest
+    revoked     INTEGER NOT NULL DEFAULT 0,
+    revoked_at  TEXT
+);
+
+-- ----------------------------------------------------------------------------
+-- external_assessments: queued outside-in assessment runs (V0.5).
+-- targets/probes are JSON arrays. Findings produced by ingest live in the
+-- normal findings/evidence tables (collector "external.<probe>").
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS external_assessments (
+    id          TEXT PRIMARY KEY,          -- uuid4 hex
+    worker_id   TEXT NOT NULL REFERENCES external_workers(id),
+    targets     TEXT NOT NULL DEFAULT '[]', -- JSON array of target strings
+    probes      TEXT NOT NULL DEFAULT '[]', -- JSON array of probe names
+    ports       TEXT NOT NULL DEFAULT '[]', -- JSON array of ports (optional
+                                           -- override; empty = probe default)
+    status      TEXT NOT NULL DEFAULT 'queued'
+                CHECK (status IN ('queued','running','completed','failed',
+                                 'cancelled')),
+    created_at  TEXT NOT NULL,             -- ISO-8601 UTC
+    started_at  TEXT,                      -- ISO-8601 UTC
+    finished_at TEXT,                      -- ISO-8601 UTC
+    summary     TEXT NOT NULL DEFAULT '{}' -- JSON: findings_created, ...
+);
+CREATE INDEX IF NOT EXISTS idx_ext_assess_worker
+    ON external_assessments(worker_id);
+CREATE INDEX IF NOT EXISTS idx_ext_assess_status
+    ON external_assessments(status);
