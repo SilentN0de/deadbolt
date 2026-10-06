@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- One-command install: `Dockerfile`, `docker-compose.yml`, and `.dockerignore`.
+  `docker compose up -d --build` runs Deadbolt anywhere with Docker; the port
+  stays on the host's loopback (127.0.0.1:8000), findings persist in a named
+  volume, and `./config` is mounted for scope edits. Shipped
+  `deploy/deadbolt.service` systemd unit for bare-metal/VM installs.
+
 ## [0.5.0] — 2026-10-05
 
 ### Added

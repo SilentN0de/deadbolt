@@ -13,6 +13,23 @@ full evidence. Off by default — nothing leaves the machine until the operator 
 
 ## Quickstart
 
+**Docker (one command)** — works on any Linux server, VPS, or VM with Docker:
+
+```bash
+git clone https://github.com/SilentN0de/deadbolt && cd deadbolt
+# Review the scope file first (default: 127.0.0.1 only — safe anywhere)
+cat config/authorized_targets.yaml
+docker compose up -d --build
+# then open http://127.0.0.1:8000  (dashboard)
+```
+
+The port is published on the host's loopback only, findings persist in a
+Docker volume, and `./config` is mounted so you can edit the scope on the
+host. `docker compose logs -f` to watch it, `docker compose down` to stop.
+
+**Bare metal / VM** (no Docker — a `deploy/deadbolt.service` systemd unit is
+shipped in `deploy/`):
+
 ```bash
 # 1. Create an isolated environment and install
 python3 -m venv .venv && source .venv/bin/activate

@@ -1,0 +1,30 @@
+# Deadbolt systemd unit (bare-metal / VM install, no Docker).
+#
+# Install:
+#   1. Copy the repo to /opt/deadbolt (or anywhere) and create a venv:
+#        python3 -m venv /opt/deadbolt/.venv
+#        /opt/deadbolt/.venv/bin/pip install -r /opt/deadbolt/requirements.txt
+#   2. If you installed somewhere other than /opt/deadbolt, adjust
+#      WorkingDirectory and ExecStart below to match.
+#   3. sudo cp deploy/deadbolt.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now deadbolt.service
+#   4. Verify: curl -s http://127.0.0.1:8000/health
+#
+# The API binds 127.0.0.1 only. SQLite data lives in <repo>/data/ and
+# auto-migrates on boot.
+[Unit]
+Description=Deadbolt local security assessment API
+After=network.target
+
+[Service]
+Type=simple
+User=deadbolt
+WorkingDirectory=/opt/deadbolt
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/deadbolt/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

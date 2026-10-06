@@ -1,0 +1,29 @@
+# Deadbolt — one-command install.
+#   docker compose up -d --build
+# Then open http://127.0.0.1:8000
+#
+# Notes:
+# - The port is published on the host's loopback only (127.0.0.1:8000),
+#   keeping Deadbolt's localhost-only posture. To expose it on your LAN,
+#   change to "8000:8000" (understand the risk first).
+# - Findings live in the `deadbolt-data` volume and survive restarts.
+# - Review ./config/authorized_targets.yaml BEFORE the first scan —
+#   default scope is 127.0.0.1 only. Edit the file on the host; the
+#   container reads it live.
+services:
+  deadbolt:
+    build: .
+    image: deadbolt:latest
+    container_name: deadbolt
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - deadbolt-data:/app/data
+      - ./config:/app/config
+    environment:
+      - DEADBOLT_HOST=0.0.0.0
+      - DEADBOLT_PORT=8000
+    restart: unless-stopped
+
+volumes:
+  deadbolt-data:
