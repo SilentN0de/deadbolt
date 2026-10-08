@@ -1,0 +1,32 @@
+flowchart TD
+    CFG(["Safety boundary<br/>config/authorized_targets.yaml<br/>every target must be authorized: true<br/>agent refuses to run otherwise"])
+    SCHED["Scheduler<br/>daily / weekly / every-N-hours"]
+    DISC["Discovery<br/>asset enumeration"]
+    VAL["Safely Validate<br/>read-only checks — no exploits,<br/>no brute force, no payloads"]
+    LIFE["Findings lifecycle<br/>evidence-backed findings"]
+    DB[("SQLite<br/>findings.db")]
+    API["FastAPI API<br/>bound to 127.0.0.1:8000"]
+    DASH["Dashboard"]
+    TREND["Trends & Retest"]
+    EXP["Exporters<br/>e.g. Splunk"]
+
+    subgraph EXT["Outside-in — V0.5, opt-in, off by default"]
+        W["External worker<br/>registers with one-time token"]
+        PROBES["Read-only probes<br/>ports · banners · TLS certs<br/>DNS MX/TXT/SPF · HTTP headers"]
+    end
+
+    CFG --> DISC
+    SCHED --> DISC
+    DISC --> VAL
+    VAL --> LIFE
+    LIFE --> DB
+    API <--> DB
+    DASH <--> API
+    LIFE --> TREND
+    LIFE --> EXP
+    W -->|"polls assessment queue"| API
+    W --> PROBES
+    PROBES -->|"results ingested as findings"| LIFE
+
+    style CFG fill:#1a2e1a,stroke:#4caf50
+    style EXT fill:#1a2333,stroke:#64b5f6
