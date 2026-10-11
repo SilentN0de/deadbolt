@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="dashboard/logo.jpg" width="160" alt="Deadbolt logo">
-</p>
-
 # Deadbolt
 
 > **Your security data belongs to you. Local by default.**

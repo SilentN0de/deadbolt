@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent.discovery import run_discovery
@@ -68,10 +67,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Deadbolt", version=VERSION, lifespan=lifespan)
-
-# Serve dashboard assets (logo, etc.) alongside the dashboard page.
-_here = os.path.dirname(os.path.abspath(__file__))
-app.mount("/dashboard", StaticFiles(directory=os.path.join(_here, "..", "dashboard")), name="dashboard")
 
 
 def _store() -> Store:
