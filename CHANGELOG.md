@@ -35,6 +35,16 @@ Polish release: two fixes found by running 0.5.0 against a real home LAN.
   is the scheduler's default scope. It still ships loopback-only by
   default: every listed target must be `authorized: true` or the agent
   refuses to run, so LAN ranges cannot ship pre-enabled.
+- **Scheduler next-run timezone.** Found while enabling weekly scans on a
+  live install: after any completed scan, `run_scheduled_scan` anchored
+  the next-run computation on the run's UTC finish timestamp, storing an
+  offset-aware `next_run` (03:00 UTC, not 03:00 local). The scheduler
+  thread's due-check compares against naive local time and raised
+  `TypeError` on every tick — no scheduled scan would ever have fired
+  again after the first one. Next-run math is now anchored on naive local
+  time, and `compute_next_run` / `due_now` normalize offset-aware inputs
+  so a legacy stored value can no longer crash the due-check. Regression
+  tests cover both the stored format and aware-value tolerance.
 
 ## [0.5.0] — 2026-10-05
 

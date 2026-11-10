@@ -5,7 +5,7 @@ real discovery -> validation -> retest pipeline runs without touching any
 real network.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import yaml
@@ -118,6 +118,18 @@ def test_due_now():
     assert due_now(_cfg(enabled=False), now, None) is False
 
 
+def test_due_now_tolerates_aware_next_run():
+    # Regression (0.5.1): a next_run stored offset-aware (older scans
+    # anchored on their UTC finish time) must not raise TypeError when
+    # the due-check compares it against naive local time.
+    cfg = _cfg(enabled=True)
+    now = datetime(2026, 10, 4, 12, 0)  # naive local
+    past_utc = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    future_utc = datetime(2999, 1, 1, tzinfo=timezone.utc)
+    assert due_now(cfg, now, past_utc) is True
+    assert due_now(cfg, now, future_utc) is False
+
+
 # -- engine against the sim lab ----------------------------------------------
 
 @pytest.fixture()
@@ -157,7 +169,11 @@ def test_scheduled_scan_discovers_validates_retests(lab, tmp_path):
         assert statuses == {"confirmed"}  # auto-validated suspected -> confirmed
         assert store.get_setting(KEY_LAST_RUN) == result["finished"]
         nxt = datetime.fromisoformat(store.get_setting(KEY_NEXT_RUN))
-        assert nxt > datetime.fromisoformat(result["finished"])
+        # Stored naive-local: the due-check compares against naive local
+        # time, so an offset-aware value here would crash every later
+        # scheduler tick (the pre-0.5.1 bug this asserts against).
+        assert nxt.tzinfo is None
+        assert nxt > datetime.now()
     finally:
         store.close()
 
@@ -232,6 +248,21 @@ def test_tick_runs_once_when_never_scheduled():
     t = _thread({KEY_CONFIG: {"enabled": True, "cadence": "interval",
                               "interval_hours": 24}}, calls)
     assert t.tick(datetime(2026, 10, 4, 12, 0)) == {"ok": True}
+    assert len(calls) == 1
+
+
+def test_tick_tolerates_legacy_aware_next_run():
+    # Regression (0.5.1): a stored offset-aware next_run (written by a
+    # pre-fix scan) must not kill the tick with a naive/aware TypeError.
+    calls = []
+    due = _thread({KEY_CONFIG: {"enabled": True, "cadence": "weekly",
+                                "time": "03:00", "weekday": 6},
+                   KEY_NEXT_RUN: "2020-01-01T00:00:00+00:00"}, calls)
+    assert due.tick(datetime(2026, 10, 4, 12, 0)) == {"ok": True}
+    not_due = _thread({KEY_CONFIG: {"enabled": True, "cadence": "weekly",
+                                    "time": "03:00", "weekday": 6},
+                       KEY_NEXT_RUN: "2999-01-01T00:00:00+00:00"}, calls)
+    assert not_due.tick(datetime(2026, 10, 4, 12, 0)) is None
     assert len(calls) == 1
 
 

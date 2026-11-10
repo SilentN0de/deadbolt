@@ -22,9 +22,26 @@ KEY_LAST_RESULT = "schedule.last_result"  # JSON summary of last run
 TICK_SECONDS = 60.0
 
 
+def _as_naive_local(dt: datetime) -> datetime:
+    """Convert an offset-aware datetime to naive local wall-clock time.
+
+    All schedule math in this module is naive local (config times are
+    "HH:MM in the server's local timezone"). Aware values — e.g. a
+    next_run stored by a scan anchored on its UTC finish timestamp —
+    must be normalized before comparison, or naive/aware comparison
+    raises TypeError and the due-check dies.
+    """
+    if dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
 def compute_next_run(cfg: ScheduleConfig, now: datetime,
                      last_run: Optional[datetime] = None) -> datetime:
     """Next scheduled run strictly after `now` (naive local datetimes)."""
+    now = _as_naive_local(now)
+    if last_run is not None:
+        last_run = _as_naive_local(last_run)
     hh, mm = int(cfg.time[:2]), int(cfg.time[3:5])
     if cfg.cadence == "daily":
         candidate = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
@@ -53,7 +70,7 @@ def due_now(cfg: ScheduleConfig, now: datetime,
         return False
     if next_run is None:
         return True  # enabled but never scheduled -> run once, then schedule
-    return now >= next_run
+    return _as_naive_local(now) >= _as_naive_local(next_run)
 
 
 def run_scheduled_scan(db_path: str, cfg: ScheduleConfig,
@@ -93,8 +110,14 @@ def run_scheduled_scan(db_path: str, cfg: ScheduleConfig,
             store, scope_path=scope_path or _default_scope())
 
         finished = utc_now_iso()
-        last_run = datetime.fromisoformat(finished)
-        next_run = compute_next_run(cfg, last_run, last_run=last_run)
+        # Next-run math is naive LOCAL wall-clock (config times are local,
+        # and for weekly cadence the weekday must be the local one).
+        # Anchoring on the UTC finish timestamp stored an offset-aware
+        # next_run (03:00 UTC, not 03:00 local) that the due-check could
+        # not compare against naive local time — every later tick raised
+        # TypeError and no scheduled scan ever fired again.
+        local_now = datetime.now()
+        next_run = compute_next_run(cfg, local_now, last_run=local_now)
         result = {
             "started": started,
             "finished": finished,
