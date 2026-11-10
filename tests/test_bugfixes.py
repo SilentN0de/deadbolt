@@ -3,6 +3,10 @@
 Covers: socket FD leaks (discovery + validator), stable finding titles for
 dedupe, /31 scope expansion, API validate check-list hardening, and the
 Splunk HEC empty-batch guard.
+
+Also covers the V0.5.1 finding-identity fix: pre-V0.3 titles embedded the
+observed banner ("— no banner returned", "— banner: '...'"), and the old
+exact-string upsert duplicated those findings on the first modern scan.
 """
 
 import socket
@@ -180,3 +184,98 @@ def test_send_hec_empty_events_skips_post():
     assert res == {"mode": "hec",
                    "endpoint": "http://127.0.0.1:1/services/collector/event",
                    "events": 0, "ack": {}}
+
+
+# -- finding identity: title variants must not duplicate (V0.5.1) -------------
+
+from storage.models import (Finding, canonical_finding_title,
+                            finding_identity)
+
+
+def _upsert(store, target, title, ts, severity="info"):
+    return store.upsert_finding(Finding.new(
+        target=target, title=title, severity=severity, first_seen=ts))
+
+
+def test_identity_ignores_banner_suffixes():
+    base = finding_identity("10.0.0.12", "Open port 445/tcp (SMB)")
+    assert finding_identity(
+        "10.0.0.12", "Open port 445/tcp (SMB) — no banner returned") == base
+    assert finding_identity(
+        "10.0.0.12", "Open port 445/tcp (SMB) — banner: 'SMBv1'") == base
+    # Port, service, vantage, and target are all part of the identity.
+    assert finding_identity("10.0.0.12", "Open port 139/tcp (SMB)") != base
+    assert finding_identity("10.0.0.12", "Open port 445/tcp (NetBIOS)") != base
+    assert finding_identity("10.0.0.13", "Open port 445/tcp (SMB)") != base
+    assert finding_identity(
+        "10.0.0.12", "External view: open port 445/tcp (SMB)") != base
+    assert canonical_finding_title(
+        "Open port 22/tcp (SSH) — banner: 'SSH-2.0-X'"
+    ) == "Open port 22/tcp (SSH)"
+
+
+def test_upsert_matches_legacy_no_banner_title(tmp_path):
+    store = Store(str(tmp_path / "t.db"))
+    try:
+        old = _upsert(store, "127.0.0.1",
+                      "Open port 445/tcp (SMB) — no banner returned",
+                      "2026-09-30T00:00:00+00:00", severity="medium")
+        new = _upsert(store, "127.0.0.1", "Open port 445/tcp (SMB)",
+                      "2026-11-10T00:00:00+00:00", severity="medium")
+        assert new.id == old.id  # same finding, not a duplicate row
+        findings = store.list_findings(target="127.0.0.1")
+        assert len(findings) == 1
+        assert findings[0].title == "Open port 445/tcp (SMB)"  # canonicalized
+        assert findings[0].first_seen == "2026-09-30T00:00:00+00:00"
+        assert findings[0].last_seen == "2026-11-10T00:00:00+00:00"
+    finally:
+        store.close()
+
+
+def test_upsert_matches_legacy_banner_title(tmp_path):
+    store = Store(str(tmp_path / "t.db"))
+    try:
+        old = _upsert(
+            store, "10.0.0.12",
+            "Open port 22/tcp (SSH) — banner: 'SSH-2.0-OpenSSH_8.9'",
+            "2026-09-30T00:00:00+00:00")
+        new = _upsert(store, "10.0.0.12", "Open port 22/tcp (SSH)",
+                      "2026-11-10T00:00:00+00:00")
+        assert new.id == old.id
+        assert len(store.list_findings(target="10.0.0.12")) == 1
+    finally:
+        store.close()
+
+
+def test_upsert_variant_after_canonical_still_one_row(tmp_path):
+    store = Store(str(tmp_path / "t.db"))
+    try:
+        first = _upsert(store, "10.0.0.1", "Open port 443/tcp (HTTPS)",
+                        "2026-11-10T00:00:00+00:00")
+        # A legacy-format writer re-observing must not duplicate either.
+        second = _upsert(store, "10.0.0.1",
+                         "Open port 443/tcp (HTTPS) — no banner returned",
+                         "2026-11-10T01:00:00+00:00")
+        assert second.id == first.id
+        findings = store.list_findings(target="10.0.0.1")
+        assert len(findings) == 1
+        assert findings[0].title == "Open port 443/tcp (HTTPS)"
+    finally:
+        store.close()
+
+
+def test_distinct_ports_and_vantages_stay_distinct(tmp_path):
+    store = Store(str(tmp_path / "t.db"))
+    try:
+        ts = "2026-11-10T00:00:00+00:00"
+        _upsert(store, "10.0.0.12", "Open port 445/tcp (SMB)", ts,
+                severity="medium")
+        _upsert(store, "10.0.0.12", "Open port 139/tcp (NetBIOS)", ts)
+        _upsert(store, "10.0.0.12",
+                "External view: open port 445/tcp (SMB)", ts,
+                severity="medium")
+        _upsert(store, "10.0.0.12",
+                "Host unresponsive to TCP discovery probes (timeouts)", ts)
+        assert len(store.list_findings(target="10.0.0.12")) == 4
+    finally:
+        store.close()

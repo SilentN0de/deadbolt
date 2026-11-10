@@ -1,7 +1,8 @@
 """SQLite storage layer (stdlib sqlite3, WAL mode).
 
-Owns: schema init, findings upsert (dedupe on (target, title)), evidence
-append, run tracking, and the immutable audit log.
+Owns: schema init, findings upsert (dedupe on normalized finding identity —
+see storage.models.finding_identity), evidence append, run tracking, and
+the immutable audit log.
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
 from .models import (AuditEntry, Evidence, Finding, FindingEvent, Run,
-                     STATUSES, Validation, dumps, loads)
+                     STATUSES, Validation, canonical_finding_title, dumps,
+                     finding_identity, loads)
 from common.logging_setup import utc_now_iso
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
@@ -72,16 +74,29 @@ class Store:
 
     # -- findings -----------------------------------------------------------
     def upsert_finding(self, finding: Finding) -> Finding:
-        """Insert or refresh a finding deduped on (target, title).
+        """Insert or refresh a finding, deduped on finding identity.
 
-        On re-observation: last_seen is updated and a retest event is appended.
-        Returns the stored finding (with its stable id).
+        Identity is the normalized (target, port, service) for open-port
+        findings (see storage.models.finding_identity), so legacy title
+        variants that embed banner text ("— no banner returned",
+        "— banner: '...'") match the canonical row instead of duplicating
+        it. The stored title is canonicalized on both insert and refresh.
+
+        On re-observation: last_seen is updated and a retest event is
+        appended. Returns the stored finding (with its stable id).
         """
+        identity = finding_identity(finding.target, finding.title)
+        canonical_title = canonical_finding_title(finding.title)
         with self._tx() as conn:
-            row = conn.execute(
-                "SELECT * FROM findings WHERE target = ? AND title = ?",
-                (finding.target, finding.title),
-            ).fetchone()
+            row = None
+            for candidate in conn.execute(
+                "SELECT * FROM findings WHERE target = ?",
+                (finding.target,),
+            ).fetchall():
+                if finding_identity(candidate["target"],
+                                    candidate["title"]) == identity:
+                    row = candidate
+                    break
             if row is None:
                 conn.execute(
                     """INSERT INTO findings
@@ -91,7 +106,7 @@ class Store:
                     (
                         finding.id,
                         finding.target,
-                        finding.title,
+                        canonical_title,
                         finding.severity,
                         finding.status,
                         finding.first_seen,
@@ -100,7 +115,9 @@ class Store:
                         dumps(finding.retest_history),
                     ),
                 )
-                return finding
+                stored = self.get_finding(finding.id)
+                assert stored is not None
+                return stored
             # Re-observed: refresh last_seen, keep the stronger severity, log retest.
             history = loads(row["retest_history"])
             if isinstance(history, dict):  # defensive: never store dicts
@@ -120,9 +137,11 @@ class Store:
             )
             conn.execute(
                 """UPDATE findings
-                   SET last_seen = ?, severity = ?, retest_history = ?
+                   SET last_seen = ?, severity = ?, title = ?,
+                       retest_history = ?
                    WHERE id = ?""",
-                (finding.last_seen, severity, dumps(history), row["id"]),
+                (finding.last_seen, severity, canonical_title,
+                 dumps(history), row["id"]),
             )
             stored = self.get_finding(row["id"])
             assert stored is not None

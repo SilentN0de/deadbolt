@@ -12,6 +12,30 @@ All notable changes to this project are documented here. Format follows
   volume, and `./config` is mounted for scope edits. Shipped
   `deploy/deadbolt.service` systemd unit for bare-metal/VM installs.
 
+## [0.5.1] — 2026-11-10
+
+Polish release: two fixes found by running 0.5.0 against a real home LAN.
+
+### Fixed
+- **Finding identity / dedupe.** Finding upserts previously matched on the
+  exact (target, title) string. Pre-V0.3 titles embedded the observed
+  banner ("Open port 445/tcp (SMB) — no banner returned",
+  "... — banner: 'SSH-2.0-...'"), so the first scan with modern stable
+  titles duplicated every still-open legacy finding (15 duplicate pairs in
+  the production database, including all three SMB mediums). Upserts now
+  match on a normalized identity — (target, vantage, port, service) parsed
+  from the title via `storage.models.finding_identity` — and stored titles
+  are canonicalized on insert and on re-observation, so banner changes and
+  title-format drift update the existing finding instead of duplicating
+  it. Regression tests cover both legacy title variants in both orders,
+  plus port/service/vantage distinctness.
+- **Shipped scope template.** `config/authorized_targets.yaml` now carries
+  a proper home/lab LAN template (the common 192.168.1.0/24, 192.168.0.0/24,
+  and 10.0.0.0/24 blocks, ready to uncomment) and documents that this file
+  is the scheduler's default scope. It still ships loopback-only by
+  default: every listed target must be `authorized: true` or the agent
+  refuses to run, so LAN ranges cannot ship pre-enabled.
+
 ## [0.5.0] — 2026-10-05
 
 ### Added

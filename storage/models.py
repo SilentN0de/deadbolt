@@ -7,6 +7,7 @@ Plain dataclasses mirroring storage/schema.sql. JSON serialization is via
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List
@@ -75,6 +76,53 @@ class Finding:
         if not include_evidence:
             d.pop("evidence", None)
         return d
+
+
+# ---------------------------------------------------------------------------
+# Finding identity (V0.5.1)
+#
+# A finding's identity is NOT its raw title string. Early versions embedded
+# the observed banner in open-port titles ("Open port 445/tcp (SMB) — no
+# banner returned", "... — banner: 'SSH-2.0-...'"), so when a banner changed
+# — or the title format changed between versions — the exact-match upsert
+# spawned a duplicate row for the same host/port/service. Identity therefore
+# keys open-port findings on (target, vantage, port, service) parsed from
+# the title; the banner-derived suffix is evidence, not identity.
+# ---------------------------------------------------------------------------
+
+_OPEN_PORT_TITLE_RE = re.compile(
+    r"^(?P<base>(?P<vantage>External view: )?[Oo]pen port "
+    r"(?P<port>\d+)/tcp \((?P<service>[^)]+)\))"
+)
+
+
+def canonical_finding_title(title: str) -> str:
+    """Canonical form of a finding title.
+
+    Open-port titles reduce to their base ("Open port {port}/tcp ({svc})",
+    keeping an "External view: " vantage prefix and original casing) with
+    any observational suffix dropped. Other titles are returned with
+    whitespace collapsed.
+    """
+    collapsed = " ".join((title or "").split())
+    m = _OPEN_PORT_TITLE_RE.match(collapsed)
+    if m:
+        return m.group("base")
+    return collapsed
+
+
+def finding_identity(target: str, title: str) -> tuple:
+    """Stable identity key for a finding: equal keys == the same finding.
+
+    Open-port findings key on (target, "port", external?, port, service);
+    every other finding keys on (target, "title", canonical title).
+    """
+    collapsed = " ".join((title or "").split())
+    m = _OPEN_PORT_TITLE_RE.match(collapsed)
+    if m:
+        return (target, "port", bool(m.group("vantage")),
+                int(m.group("port")), m.group("service").lower())
+    return (target, "title", canonical_finding_title(title))
 
 
 @dataclass

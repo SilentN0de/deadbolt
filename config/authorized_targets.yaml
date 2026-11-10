@@ -2,12 +2,19 @@
 # Authorized assessment targets — Deadbolt
 # ---------------------------------------------------------------------------
 # SAFETY: the agent REFUSES to run unless this file exists and explicitly
-# lists at least one target. Every target entry must set `authorized: true`.
+# lists at least one target. EVERY entry in `targets:` must set
+# `authorized: true` — a single unauthorized entry refuses the whole run.
+# That is why the LAN block below ships commented out: uncomment it only
+# for a network you own or are explicitly authorized to assess.
 #
 # Public IPs and 0.0.0.0/0 additionally require:
 #   authorization_acknowledged: true   (top-level, in this file)
 # AND per-target `authorized: true`.
 # Every allow/deny decision is written to the log and the immutable audit log.
+#
+# This file is also the DEFAULT scope for scheduled scans (see the
+# scheduler's `scope_path`, empty = this file), so keep it pointed at the
+# networks you actually want assessed automatically.
 # ---------------------------------------------------------------------------
 
 version: 1
@@ -22,10 +29,25 @@ targets:
     authorized: true
     label: "localhost (loopback)"
 
-  # Examples (uncomment and authorize deliberately):
+  # --- Home / lab LAN -------------------------------------------------------
+  # The typical Deadbolt install assesses the owner's own LAN. Uncomment ONE
+  # block below (adjust the subnet to match your router's LAN range) to add
+  # it. Keep `authorized: true` exactly as written — see the safety note at
+  # the top of this file.
+  #
   # - target: "192.168.1.0/24"
   #   authorized: true
-  #   label: "home lab LAN"
-  # - target: "10.0.0.5"
+  #   label: "home LAN (192.168.1.x)"
+  #
+  # - target: "192.168.0.0/24"
+  #   authorized: true
+  #   label: "home LAN (192.168.0.x)"
+  #
+  # - target: "10.0.0.0/24"
+  #   authorized: true
+  #   label: "home LAN (10.0.0.x)"
+  #
+  # A single extra host instead of a whole subnet:
+  # - target: "192.168.1.10"
   #   authorized: true
   #   label: "lab server"

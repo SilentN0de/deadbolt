@@ -40,7 +40,7 @@ from storage.models import STATUSES, AuditEntry
 from trends import get_summary, get_trends
 from validator import ALL_CHECKS, ValidationError, validate_finding
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data", "findings.db")
 DEFAULT_SCOPE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

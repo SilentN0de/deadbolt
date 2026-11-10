@@ -205,10 +205,10 @@ def report_to_findings(report: DiscoveryReport, store: Store) -> List[Finding]:
             svc, severity, remediation = PORTS.get(
                 r.port, ("unknown", "low", "Identify this service and restrict it to trusted networks if it is not needed.")
             )
-            # Title is intentionally stable (no banner text): findings dedupe
-            # on (target, title), and a banner change (e.g. service upgrade)
-            # must update the finding, not spawn a duplicate. The banner
-            # lives in the evidence detail.
+            # Title is intentionally stable (no banner text): finding
+            # identity is (target, port, service), and a banner change
+            # (e.g. service upgrade) must update the finding, not spawn a
+            # duplicate. The banner lives in the evidence detail.
             title = f"Open port {r.port}/tcp ({svc})"
             finding = Finding.new(
                 target=host, title=title, severity=severity,

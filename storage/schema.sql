@@ -8,8 +8,11 @@
 PRAGMA journal_mode=WAL;
 
 -- ----------------------------------------------------------------------------
--- findings: one row per distinct (target, title). Re-runs update last_seen
--- and append retest history instead of duplicating rows.
+-- findings: one row per distinct finding identity (normalized target +
+-- port/service for open-port findings; see storage.models.finding_identity).
+-- Re-runs update last_seen and append retest history instead of duplicating
+-- rows. The UNIQUE (target, title) constraint below is a backstop; titles
+-- are stored in canonical form.
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS findings (
     id              TEXT PRIMARY KEY,          -- uuid4 hex
